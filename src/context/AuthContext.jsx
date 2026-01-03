@@ -8,8 +8,13 @@ export const AuthProvider = ({ children }) => {
     const [subscription, setSubscription] = useState(null);
     const [loading, setLoading] = useState(true);
 
+    // =====================================================
+    // 🔹 INITIAL SESSION LOAD (MAGIC LINK SAFE)
+    // =====================================================
     useEffect(() => {
-        const setupAuth = async () => {
+        const init = async () => {
+            setLoading(true);
+
             const {
                 data: { session },
             } = await supabase.auth.getSession();
@@ -19,24 +24,33 @@ export const AuthProvider = ({ children }) => {
 
             if (currentUser?.email) {
                 await fetchSubscription(currentUser.email);
+            } else {
+                setSubscription(null);
             }
 
             setLoading(false);
         };
 
-        setupAuth();
+        init();
 
+        // =====================================================
+        // 🔹 AUTH STATE CHANGES (LOGIN / LOGOUT)
+        // =====================================================
         const {
             data: { subscription: authListener },
-        } = supabase.auth.onAuthStateChange((_event, session) => {
+        } = supabase.auth.onAuthStateChange(async (_event, session) => {
+            setLoading(true);
+
             const currentUser = session?.user || null;
             setUser(currentUser);
 
             if (currentUser?.email) {
-                fetchSubscription(currentUser.email);
+                await fetchSubscription(currentUser.email);
             } else {
                 setSubscription(null);
             }
+
+            setLoading(false);
         });
 
         return () => {
@@ -44,6 +58,9 @@ export const AuthProvider = ({ children }) => {
         };
     }, []);
 
+    // =====================================================
+    // 🔹 FETCH SUBSCRIPTION (LIFETIME SAFE)
+    // =====================================================
     const fetchSubscription = async (email) => {
         const { data, error } = await supabase
             .from("subscriptions")
@@ -52,11 +69,18 @@ export const AuthProvider = ({ children }) => {
             .single();
 
         if (error || !data) {
-            console.error("Subscription fetch failed:", error);
+            console.warn("No subscription found");
             setSubscription(null);
             return;
         }
 
+        // Lifetime plan → expiry_date = null
+        if (data.status === "active" && !data.expiry_date) {
+            setSubscription(data);
+            return;
+        }
+
+        // Monthly / Quarterly
         const today = new Date();
         const expiry = new Date(data.expiry_date);
 
@@ -67,7 +91,9 @@ export const AuthProvider = ({ children }) => {
         }
     };
 
-    // ✅ ✅ ADD THIS LOGOUT FUNCTION
+    // =====================================================
+    // 🔹 LOGOUT
+    // =====================================================
     const logout = async () => {
         await supabase.auth.signOut();
         setUser(null);
@@ -80,7 +106,7 @@ export const AuthProvider = ({ children }) => {
                 user,
                 subscription,
                 loading,
-                logout, // ✅ EXPORT LOGOUT HERE
+                logout,
             }}
         >
             {children}
