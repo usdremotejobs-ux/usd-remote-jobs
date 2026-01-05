@@ -6,18 +6,24 @@ export default function ProtectedRoute({ children, requireActiveSubscription }) 
   const { user, subscription, authLoading } = useAuth()
   const location = useLocation()
   
-  // ✅ Add grace period for subscription checks to prevent premature redirects
-  const [subscriptionChecked, setSubscriptionChecked] = useState(false)
+  // ✅ Track if this is initial page load
+  const [isInitialLoad, setIsInitialLoad] = useState(true)
+  const [gracePeriodComplete, setGracePeriodComplete] = useState(false)
 
   useEffect(() => {
-    if (!authLoading) {
-      // Give a moment for subscription to load after auth completes
+    if (!authLoading && isInitialLoad) {
+      // On initial page load, give extra time for subscription to load
       const timer = setTimeout(() => {
-        setSubscriptionChecked(true)
-      }, 500)
+        setGracePeriodComplete(true)
+        setIsInitialLoad(false)
+      }, 2000) // 2 second grace period for page refresh
+      
       return () => clearTimeout(timer)
+    } else if (!authLoading) {
+      // For subsequent navigation, grace period is instant
+      setGracePeriodComplete(true)
     }
-  }, [authLoading])
+  }, [authLoading, isInitialLoad])
 
   // ✅ Show loading during auth initialization
   if (authLoading) {
@@ -31,13 +37,14 @@ export default function ProtectedRoute({ children, requireActiveSubscription }) 
 
   // ✅ If subscription is required, check it
   if (requireActiveSubscription) {
-    // Give subscription check a grace period
-    if (!subscriptionChecked) {
+    // During grace period, show loading instead of redirecting
+    if (!gracePeriodComplete) {
       return <div className="page-loader">Verifying subscription...</div>
     }
 
+    // After grace period, check subscription
     if (!subscription || subscription.status !== "active") {
-      console.log("Redirecting to upgrade - subscription status:", subscription?.status)
+      console.log("Redirecting to upgrade - subscription:", subscription)
       return <Navigate to="/upgrade" replace />
     }
   }
