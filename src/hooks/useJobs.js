@@ -16,8 +16,15 @@ export function useJobs() {
   const isFetching = useRef(false)
 
   const fetchJobs = async ({ force = false } = {}) => {
-    if (!user) return
-    if (isFetching.current) return
+    // ✅ EARLY RETURN WITH PROPER LOADING STATE
+    if (!user) {
+      setLoading(false)
+      return
+    }
+    
+    if (isFetching.current) {
+      return
+    }
 
     // 🧠 Cache check
     if (
@@ -35,31 +42,50 @@ export function useJobs() {
     setLoading(true)
     setError(null)
 
-    const { data, error } = await supabase
-      .from("jobs")
-      .select("*")
-      .order("created_at", { ascending: false })
+    try {
+      // ✅ ADD TIMEOUT
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Request timeout')), 10000)
+      )
 
-    if (error) {
-      console.error("❌ Jobs fetch failed:", error)
-      setError("Failed to load jobs. Please refresh.")
+      const fetchPromise = supabase
+        .from("jobs")
+        .select("*")
+        .order("created_at", { ascending: false })
+
+      const { data, error } = await Promise.race([fetchPromise, timeoutPromise])
+
+      if (error) {
+        console.error("❌ Jobs fetch failed:", error)
+        setError("Failed to load jobs. Please refresh.")
+        setLoading(false)
+        isFetching.current = false
+        return
+      }
+
+      JOBS_CACHE = data || []
+      LAST_FETCH_AT = Date.now()
+
+      setJobs(JOBS_CACHE)
       setLoading(false)
+    } catch (err) {
+      console.error("❌ Jobs fetch error:", err)
+      setError(err.message === 'Request timeout' 
+        ? "Request timed out. Please refresh." 
+        : "Failed to load jobs. Please refresh.")
+      setLoading(false)
+    } finally {
       isFetching.current = false
-      return
     }
-
-    JOBS_CACHE = data || []
-    LAST_FETCH_AT = Date.now()
-
-    setJobs(JOBS_CACHE)
-    setLoading(false)
-    isFetching.current = false
   }
 
   // ✅ Fetch only when auth is READY
   useEffect(() => {
     if (!authLoading && user) {
       fetchJobs()
+    } else if (!authLoading && !user) {
+      // Clear loading state if no user
+      setLoading(false)
     }
   }, [authLoading, user])
 
