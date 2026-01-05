@@ -9,59 +9,14 @@ export const AuthProvider = ({ children }) => {
     const [loading, setLoading] = useState(true);
 
     // =====================================================
-    // 🔹 INITIAL SESSION LOAD (MAGIC LINK SAFE)
-    // =====================================================
-    useEffect(() => {
-        const init = async () => {
-            setLoading(true);
-
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-
-            const currentUser = session?.user || null;
-            setUser(currentUser);
-
-            if (currentUser?.email) {
-                await fetchSubscription(currentUser.email);
-            } else {
-                setSubscription(null);
-            }
-
-            setLoading(false);
-        };
-
-        init();
-
-        // =====================================================
-        // 🔹 AUTH STATE CHANGES (LOGIN / LOGOUT)
-        // =====================================================
-        const {
-            data: { subscription: authListener },
-        } = supabase.auth.onAuthStateChange(async (_event, session) => {
-            setLoading(true);
-
-            const currentUser = session?.user || null;
-            setUser(currentUser);
-
-            if (currentUser?.email) {
-                await fetchSubscription(currentUser.email);
-            } else {
-                setSubscription(null);
-            }
-
-            setLoading(false);
-        });
-
-        return () => {
-            authListener.unsubscribe();
-        };
-    }, []);
-
-    // =====================================================
     // 🔹 FETCH SUBSCRIPTION (LIFETIME SAFE)
     // =====================================================
     const fetchSubscription = async (email) => {
+        if (!email) {
+            setSubscription(null);
+            return;
+        }
+
         const { data, error } = await supabase
             .from("subscriptions")
             .select("*")
@@ -69,13 +24,12 @@ export const AuthProvider = ({ children }) => {
             .single();
 
         if (error || !data) {
-            console.warn("No subscription found");
             setSubscription(null);
             return;
         }
 
-        // Lifetime plan → expiry_date = null
-        if (data.status === "active" && !data.expiry_date) {
+        // Lifetime plan → no expiry
+        if (data.plan === "lifetime" && data.status === "active") {
             setSubscription(data);
             return;
         }
@@ -90,6 +44,56 @@ export const AuthProvider = ({ children }) => {
             setSubscription(null);
         }
     };
+
+    // =====================================================
+    // 🔹 AUTH BOOTSTRAP + LISTENER
+    // =====================================================
+    useEffect(() => {
+        let mounted = true;
+
+        const bootstrap = async () => {
+            const {
+                data: { session },
+            } = await supabase.auth.getSession();
+
+            if (!mounted) return;
+
+            const currentUser = session?.user ?? null;
+            setUser(currentUser);
+
+            if (currentUser?.email) {
+                await fetchSubscription(currentUser.email);
+            } else {
+                setSubscription(null);
+            }
+
+            if (mounted) setLoading(false);
+        };
+
+        bootstrap();
+
+        const {
+            data: { subscription: authSubscription },
+        } = supabase.auth.onAuthStateChange(async (_event, session) => {
+            if (!mounted) return;
+
+            const currentUser = session?.user ?? null;
+            setUser(currentUser);
+
+            if (currentUser?.email) {
+                await fetchSubscription(currentUser.email);
+            } else {
+                setSubscription(null);
+            }
+
+            if (mounted) setLoading(false);
+        });
+
+        return () => {
+            mounted = false;
+            authSubscription.unsubscribe();
+        };
+    }, []);
 
     // =====================================================
     // 🔹 LOGOUT
