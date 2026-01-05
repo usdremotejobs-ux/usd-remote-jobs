@@ -7,15 +7,22 @@ import Upgrade from "./pages/Upgrade";
 import ProtectedRoute from "./components/ProtectedRoute";
 
 function AppRoutes() {
-    const { loading } = useAuth();
+    // 🔴 WAS: const { loading } = useAuth(); (This was undefined!)
+    // 🟢 FIX: Use 'authLoading' to match AuthContext
+    const { authLoading } = useAuth(); 
 
-    // ✅ GLOBAL LOADING SCREEN (SAFE)
-    if (loading) {
+    // ✅ GLOBAL LOADING SCREEN
+    // Now this will actually block rendering until Supabase is ready
+    if (authLoading) {
         return (
             <div
                 style={{
-                    paddingTop: "60px",
-                    textAlign: "center",
+                    height: "100vh",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "1.2rem",
+                    color: "var(--text-muted)"
                 }}
             >
                 Loading...
