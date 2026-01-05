@@ -5,15 +5,10 @@ export default function ProtectedRoute({
     children,
     requireActiveSubscription = false,
 }) {
-    const { user, subscription, loading } = useAuth();
+    const { user, subscription } = useAuth();
     const location = useLocation();
 
-    // 🚫 DO NOT BLOCK RENDER WHILE LOADING
-    if (loading) {
-        return null; // critical fix
-    }
-
-    // 🔒 Not logged in → login
+    // 🔒 Not logged in
     if (!user) {
         return <Navigate to="/login" state={{ from: location }} replace />;
     }
