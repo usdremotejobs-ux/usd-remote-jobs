@@ -8,9 +8,6 @@ export const AuthProvider = ({ children }) => {
   const [subscription, setSubscription] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
 
-  // =====================================================
-  // 🔹 FETCH SUBSCRIPTION (LIFETIME SAFE)
-  // =====================================================
   const fetchSubscription = async (email) => {
     if (!email) {
       setSubscription(null)
@@ -28,13 +25,11 @@ export const AuthProvider = ({ children }) => {
       return
     }
 
-    // Lifetime plan
     if (data.plan === "lifetime" && data.status === "active") {
       setSubscription(data)
       return
     }
 
-    // Time-based plans
     const today = new Date()
     const expiry = new Date(data.expiry_date)
 
@@ -45,59 +40,59 @@ export const AuthProvider = ({ children }) => {
     }
   }
 
-  // =====================================================
-  // 🔹 AUTH BOOTSTRAP + LISTENER (REFRESH SAFE)
-  // =====================================================
   useEffect(() => {
     let mounted = true
 
     const bootstrap = async () => {
-      const {
-        data: { session },
-      } = await supabase.auth.getSession()
+      try {
+        const { data } = await supabase.auth.getSession()
+        if (!mounted) return
 
-      if (!mounted) return
+        const currentUser = data.session?.user ?? null
+        setUser(currentUser)
 
-      const currentUser = session?.user ?? null
-      setUser(currentUser)
-
-      if (currentUser?.email) {
-        await fetchSubscription(currentUser.email)
-      } else {
+        if (currentUser?.email) {
+          await fetchSubscription(currentUser.email)
+        } else {
+          setSubscription(null)
+        }
+      } catch (err) {
+        console.error("Auth bootstrap failed", err)
+        setUser(null)
         setSubscription(null)
+      } finally {
+        // 🔑 GUARANTEE EXIT
+        if (mounted) setAuthLoading(false)
       }
-
-      setAuthLoading(false)
     }
 
     bootstrap()
 
     const {
-      data: { subscription: authSubscription },
+      data: { subscription: authSub },
     } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (!mounted) return
 
-      const currentUser = session?.user ?? null
-      setUser(currentUser)
+      try {
+        const currentUser = session?.user ?? null
+        setUser(currentUser)
 
-      if (currentUser?.email) {
-        await fetchSubscription(currentUser.email)
-      } else {
-        setSubscription(null)
+        if (currentUser?.email) {
+          await fetchSubscription(currentUser.email)
+        } else {
+          setSubscription(null)
+        }
+      } finally {
+        if (mounted) setAuthLoading(false)
       }
-
-      setAuthLoading(false)
     })
 
     return () => {
       mounted = false
-      authSubscription.unsubscribe()
+      authSub.unsubscribe()
     }
   }, [])
 
-  // =====================================================
-  // 🔹 LOGOUT
-  // =====================================================
   const logout = async () => {
     await supabase.auth.signOut()
     setUser(null)
