@@ -1,121 +1,68 @@
-import { createContext, useContext, useEffect, useState } from "react";
-import { supabase } from "../lib/supabaseClient";
+import { createContext, useContext, useEffect, useState } from "react"
+import { supabase } from "../supabaseClient"
 
-const AuthContext = createContext(null);
+const AuthContext = createContext()
 
-export const AuthProvider = ({ children }) => {
-    const [user, setUser] = useState(null);
-    const [subscription, setSubscription] = useState(null);
-    const [loading, setLoading] = useState(true);
+export function AuthProvider({ children }) {
+  const [user, setUser] = useState(null)
+  const [subscription, setSubscription] = useState(null)
+  const [authLoading, setAuthLoading] = useState(true)
 
-    // =====================================================
-    // 🔹 FETCH SUBSCRIPTION (LIFETIME SAFE)
-    // =====================================================
-    const fetchSubscription = async (email) => {
-        if (!email) {
-            setSubscription(null);
-            return;
+  useEffect(() => {
+    let mounted = true
+
+    // 🔑 STEP 1: Restore session on refresh
+    supabase.auth.getSession().then(({ data }) => {
+      if (!mounted) return
+
+      setUser(data.session?.user ?? null)
+      setAuthLoading(false)
+    })
+
+    // 🔄 STEP 2: Listen to future auth changes
+    const { data: listener } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        if (!mounted) return
+
+        // IMPORTANT: INITIAL_SESSION fires on refresh
+        if (event === "INITIAL_SESSION") {
+          setUser(session?.user ?? null)
+          setAuthLoading(false)
+          return
         }
 
-        const { data, error } = await supabase
-            .from("subscriptions")
-            .select("*")
-            .eq("email", email)
-            .single();
-
-        if (error || !data) {
-            setSubscription(null);
-            return;
+        if (event === "SIGNED_IN") {
+          setUser(session?.user ?? null)
+          setAuthLoading(false)
         }
 
-        // Lifetime plan → no expiry
-        if (data.plan === "lifetime" && data.status === "active") {
-            setSubscription(data);
-            return;
+        if (event === "SIGNED_OUT") {
+          setUser(null)
+          setSubscription(null)
+          setAuthLoading(false)
         }
+      }
+    )
 
-        // Monthly / Quarterly
-        const today = new Date();
-        const expiry = new Date(data.expiry_date);
+    return () => {
+      mounted = false
+      listener.subscription.unsubscribe()
+    }
+  }, [])
 
-        if (data.status === "active" && expiry >= today) {
-            setSubscription(data);
-        } else {
-            setSubscription(null);
-        }
-    };
+  return (
+    <AuthContext.Provider
+      value={{
+        user,
+        subscription,
+        authLoading,
+      }}
+    >
+      {children}
+    </AuthContext.Provider>
+  )
+}
 
-    // =====================================================
-    // 🔹 AUTH BOOTSTRAP + LISTENER
-    // =====================================================
-    useEffect(() => {
-        let mounted = true;
-
-        const bootstrap = async () => {
-            const {
-                data: { session },
-            } = await supabase.auth.getSession();
-
-            if (!mounted) return;
-
-            const currentUser = session?.user ?? null;
-            setUser(currentUser);
-
-            if (currentUser?.email) {
-                await fetchSubscription(currentUser.email);
-            } else {
-                setSubscription(null);
-            }
-
-            if (mounted) setLoading(false);
-        };
-
-        bootstrap();
-
-        const {
-            data: { subscription: authSubscription },
-        } = supabase.auth.onAuthStateChange(async (_event, session) => {
-            if (!mounted) return;
-
-            const currentUser = session?.user ?? null;
-            setUser(currentUser);
-
-            if (currentUser?.email) {
-                await fetchSubscription(currentUser.email);
-            } else {
-                setSubscription(null);
-            }
-
-            if (mounted) setLoading(false);
-        });
-
-        return () => {
-            mounted = false;
-            authSubscription.unsubscribe();
-        };
-    }, []);
-
-    // =====================================================
-    // 🔹 LOGOUT
-    // =====================================================
-    const logout = async () => {
-        await supabase.auth.signOut();
-        setUser(null);
-        setSubscription(null);
-    };
-
-    return (
-        <AuthContext.Provider
-            value={{
-                user,
-                subscription,
-                loading,
-                logout,
-            }}
-        >
-            {children}
-        </AuthContext.Provider>
-    );
-};
-
-export const useAuth = () => useContext(AuthContext);
+export function useAuth() {
+  return useContext(AuthContext)
+}
