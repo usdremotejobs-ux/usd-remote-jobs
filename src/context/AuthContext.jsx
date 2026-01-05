@@ -8,88 +8,88 @@ export const AuthProvider = ({ children }) => {
   const [subscription, setSubscription] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
 
+  // Helper to get subscription based on email
   const fetchSubscription = async (email) => {
-    if (!email) {
-      setSubscription(null)
-      return
-    }
+    if (!email) return null
 
-    const { data, error } = await supabase
-      .from("subscriptions")
-      .select("*")
-      .eq("email", email)
-      .single()
+    try {
+      const { data, error } = await supabase
+        .from("subscriptions")
+        .select("*")
+        .eq("email", email)
+        .single()
 
-    if (error || !data) {
-      setSubscription(null)
-      return
-    }
+      if (error || !data) return null
 
-    if (data.plan === "lifetime" && data.status === "active") {
-      setSubscription(data)
-      return
-    }
+      if (data.plan === "lifetime" && data.status === "active") {
+        return data
+      }
 
-    const today = new Date()
-    const expiry = new Date(data.expiry_date)
+      const today = new Date()
+      const expiry = new Date(data.expiry_date)
 
-    if (data.status === "active" && expiry >= today) {
-      setSubscription(data)
-    } else {
-      setSubscription(null)
+      if (data.status === "active" && expiry >= today) {
+        return data
+      }
+      return null
+    } catch (err) {
+      console.error("Subscription fetch error:", err)
+      return null
     }
   }
 
   useEffect(() => {
     let mounted = true
 
-    const bootstrap = async () => {
+    // Only run this logic once on mount
+    const initializeAuth = async () => {
       try {
-        const { data } = await supabase.auth.getSession()
-        if (!mounted) return
-
-        const currentUser = data.session?.user ?? null
-        setUser(currentUser)
-
+        // 1. Get initial session
+        const { data: { session } } = await supabase.auth.getSession()
+        const currentUser = session?.user ?? null
+        
+        let subData = null
         if (currentUser?.email) {
-          await fetchSubscription(currentUser.email)
-        } else {
-          setSubscription(null)
+          subData = await fetchSubscription(currentUser.email)
         }
-      } catch (err) {
-        console.error("Auth bootstrap failed", err)
-        setUser(null)
-        setSubscription(null)
+
+        if (mounted) {
+          setUser(currentUser)
+          setSubscription(subData)
+        }
+      } catch (error) {
+        console.error("Auth init failed:", error)
       } finally {
-        // 🔑 GUARANTEE EXIT
         if (mounted) setAuthLoading(false)
       }
     }
 
-    bootstrap()
+    initializeAuth()
 
-    const {
-      data: { subscription: authSub },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (!mounted) return
-
-      try {
+    // 2. Listen for changes (Sign in, Sign out, Auto-refresh token)
+    const { data: { subscription: authListener } } = supabase.auth.onAuthStateChange(
+      async (_event, session) => {
         const currentUser = session?.user ?? null
-        setUser(currentUser)
+        
+        // Update user immediately so UI feels responsive
+        if (mounted) setUser(currentUser)
 
+        // Then fetch subscription if needed
         if (currentUser?.email) {
-          await fetchSubscription(currentUser.email)
+            const subData = await fetchSubscription(currentUser.email)
+            if (mounted) setSubscription(subData)
         } else {
-          setSubscription(null)
+            if (mounted) setSubscription(null)
         }
-      } finally {
+        
+        // Ensure loading is false after any auth event
         if (mounted) setAuthLoading(false)
       }
-    })
+    )
 
     return () => {
       mounted = false
-      authSub.unsubscribe()
+      authListener.unsubscribe()
     }
   }, [])
 
