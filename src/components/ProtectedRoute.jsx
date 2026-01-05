@@ -8,16 +8,9 @@ export default function ProtectedRoute({
     const { user, subscription, loading } = useAuth();
     const location = useLocation();
 
-    // ⛔ CRITICAL: NEVER redirect while loading
+    // 🚫 DO NOT BLOCK RENDER WHILE LOADING
     if (loading) {
-        return (
-            <div
-                className="container"
-                style={{ paddingTop: "60px", textAlign: "center" }}
-            >
-                Loading...
-            </div>
-        );
+        return null; // critical fix
     }
 
     // 🔒 Not logged in → login
@@ -27,16 +20,10 @@ export default function ProtectedRoute({
 
     // 💳 Subscription required
     if (requireActiveSubscription) {
-        /**
-         * subscription === null → not active
-         * subscription.status !== "active" → not active
-         * lifetime users are already handled in AuthContext
-         */
         if (!subscription || subscription.status !== "active") {
             return <Navigate to="/upgrade" replace />;
         }
     }
 
-    // ✅ All good → render page
     return children;
 }
