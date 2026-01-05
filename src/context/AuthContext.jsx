@@ -10,8 +10,10 @@ export const AuthProvider = ({ children }) => {
   
   // ✅ Cache subscription to preserve it during timeouts
   const subscriptionCache = useRef(null)
+  const retryCount = useRef(0)
+  const maxRetries = 2
 
-  const fetchSubscription = async (email) => {
+  const fetchSubscription = async (email, isInitialLoad = false) => {
     if (!email) {
       setSubscription(null)
       subscriptionCache.current = null
@@ -19,9 +21,11 @@ export const AuthProvider = ({ children }) => {
     }
 
     try {
-      // ✅ ADD TIMEOUT TO SUBSCRIPTION FETCH
+      // ✅ Longer timeout for initial page load
+      const timeoutDuration = isInitialLoad ? 15000 : 8000
+      
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Subscription fetch timeout')), 8000)
+        setTimeout(() => reject(new Error('Subscription fetch timeout')), timeoutDuration)
       )
 
       const fetchPromise = supabase
@@ -32,10 +36,14 @@ export const AuthProvider = ({ children }) => {
 
       const { data, error } = await Promise.race([fetchPromise, timeoutPromise])
 
+      // Reset retry count on success
+      retryCount.current = 0
+
       // ✅ Only clear subscription on real errors, not timeout
       if (error && error.code !== 'PGRST116') {
         // PGRST116 = not found, which means no subscription
         console.error("Subscription fetch error:", error)
+        
         // Keep cached subscription on network errors
         if (subscriptionCache.current) {
           console.log("Using cached subscription due to error")
@@ -72,11 +80,20 @@ export const AuthProvider = ({ children }) => {
     } catch (err) {
       console.error("Subscription fetch error:", err)
       
+      // ✅ RETRY LOGIC for initial load
+      if (isInitialLoad && retryCount.current < maxRetries) {
+        retryCount.current++
+        console.log(`Retrying subscription fetch (${retryCount.current}/${maxRetries})...`)
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        return fetchSubscription(email, isInitialLoad)
+      }
+      
       // ✅ On timeout, keep cached subscription
       if (err.message === 'Subscription fetch timeout' && subscriptionCache.current) {
         console.log("Timeout - using cached subscription")
         setSubscription(subscriptionCache.current)
       } else if (!subscriptionCache.current) {
+        // No cached subscription available
         setSubscription(null)
       }
     }
@@ -88,13 +105,13 @@ export const AuthProvider = ({ children }) => {
 
     const bootstrap = async () => {
       try {
-        // ✅ INCREASED TIMEOUT FOR INITIAL SESSION CHECK
+        // ✅ LONGER TIMEOUT FOR INITIAL LOAD
         bootstrapTimeout = setTimeout(() => {
           if (mounted && authLoading) {
             console.warn("Auth bootstrap timeout - forcing completion")
             setAuthLoading(false)
           }
-        }, 8000)
+        }, 20000)
 
         const { data } = await supabase.auth.getSession()
         if (!mounted) return
@@ -103,7 +120,7 @@ export const AuthProvider = ({ children }) => {
         setUser(currentUser)
 
         if (currentUser?.email) {
-          await fetchSubscription(currentUser.email)
+          await fetchSubscription(currentUser.email, true) // isInitialLoad = true
         } else {
           setSubscription(null)
           subscriptionCache.current = null
@@ -139,7 +156,7 @@ export const AuthProvider = ({ children }) => {
           setUser(currentUser)
           
           if (currentUser?.email) {
-            await fetchSubscription(currentUser.email)
+            await fetchSubscription(currentUser.email, false)
           }
           return
         }
@@ -157,7 +174,7 @@ export const AuthProvider = ({ children }) => {
         setUser(currentUser)
 
         if (currentUser?.email) {
-          await fetchSubscription(currentUser.email)
+          await fetchSubscription(currentUser.email, false)
         } else {
           setSubscription(null)
           subscriptionCache.current = null
