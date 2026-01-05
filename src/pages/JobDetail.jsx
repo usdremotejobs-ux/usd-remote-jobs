@@ -20,17 +20,25 @@ export default function JobDetail() {
 
   useEffect(() => {
     let active = true
+    let timeoutId = null
 
     const fetchJob = async () => {
       try {
         setLoading(true)
         setError(null)
 
-        const { data, error } = await supabase
+        // ✅ ADD TIMEOUT TO PREVENT INFINITE HANGING
+        const timeoutPromise = new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('Request timeout')), 8000)
+        })
+
+        const fetchPromise = supabase
           .from("jobs")
           .select("*")
           .eq("id", id)
           .single()
+
+        const { data, error } = await Promise.race([fetchPromise, timeoutPromise])
 
         if (!active) return
 
@@ -46,9 +54,12 @@ export default function JobDetail() {
         console.error("Unexpected error:", err)
         if (active) {
           setJob(null)
-          setError("Something went wrong while loading the job")
+          setError(err.message === 'Request timeout' 
+            ? "Request timed out. Please refresh the page." 
+            : "Something went wrong while loading the job")
         }
       } finally {
+        if (timeoutId) clearTimeout(timeoutId)
         if (active) setLoading(false)
       }
     }
@@ -57,6 +68,7 @@ export default function JobDetail() {
 
     return () => {
       active = false
+      if (timeoutId) clearTimeout(timeoutId)
     }
   }, [id])
 
@@ -85,6 +97,13 @@ export default function JobDetail() {
           <p style={{ marginBottom: "16px" }}>{error}</p>
           <button className="btn" onClick={() => navigate("/dashboard")}>
             Back to Jobs
+          </button>
+          <button 
+            className="btn" 
+            onClick={() => window.location.reload()} 
+            style={{ marginLeft: "12px" }}
+          >
+            Refresh Page
           </button>
         </div>
       </>
