@@ -7,7 +7,7 @@ import Upgrade from "./pages/Upgrade";
 import ProtectedRoute from "./components/ProtectedRoute";
 
 function AppRoutes() {
-    const { authLoading } = useAuth(); // ✅ FIXED - Use authLoading
+    const { authLoading } = useAuth()
 
     // ✅ GLOBAL LOADING SCREEN
     if (authLoading) {
