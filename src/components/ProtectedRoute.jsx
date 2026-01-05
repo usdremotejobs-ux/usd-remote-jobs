@@ -1,24 +1,23 @@
-import { Navigate, useLocation } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
+import { Navigate, useLocation } from "react-router-dom"
+import { useAuth } from "../context/AuthContext"
 
-export default function ProtectedRoute({
-    children,
-    requireActiveSubscription = false,
-}) {
-    const { user, subscription } = useAuth();
-    const location = useLocation();
+export default function ProtectedRoute({ children, requireActiveSubscription }) {
+  const { user, authLoading, subscription } = useAuth()
+  const location = useLocation()
 
-    // 🔒 Not logged in
-    if (!user) {
-        return <Navigate to="/login" state={{ from: location }} replace />;
+  if (authLoading) {
+    return <div className="page-loader">Loading...</div>
+  }
+
+  if (!user) {
+    return <Navigate to="/login" state={{ from: location }} replace />
+  }
+
+  if (requireActiveSubscription) {
+    if (!subscription || subscription.status !== "active") {
+      return <Navigate to="/upgrade" replace />
     }
+  }
 
-    // 💳 Subscription required
-    if (requireActiveSubscription) {
-        if (!subscription || subscription.status !== "active") {
-            return <Navigate to="/upgrade" replace />;
-        }
-    }
-
-    return children;
+  return children
 }
