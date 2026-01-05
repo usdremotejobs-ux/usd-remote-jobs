@@ -1,54 +1,108 @@
 import { createContext, useContext, useEffect, useState } from "react"
-import { supabase } from "../supabaseClient"
+import { supabase } from "../lib/supabaseClient"
 
-const AuthContext = createContext()
+const AuthContext = createContext(null)
 
-export function AuthProvider({ children }) {
+export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null)
   const [subscription, setSubscription] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
 
+  // =====================================================
+  // 🔹 FETCH SUBSCRIPTION (LIFETIME SAFE)
+  // =====================================================
+  const fetchSubscription = async (email) => {
+    if (!email) {
+      setSubscription(null)
+      return
+    }
+
+    const { data, error } = await supabase
+      .from("subscriptions")
+      .select("*")
+      .eq("email", email)
+      .single()
+
+    if (error || !data) {
+      setSubscription(null)
+      return
+    }
+
+    // Lifetime plan
+    if (data.plan === "lifetime" && data.status === "active") {
+      setSubscription(data)
+      return
+    }
+
+    // Time-based plans
+    const today = new Date()
+    const expiry = new Date(data.expiry_date)
+
+    if (data.status === "active" && expiry >= today) {
+      setSubscription(data)
+    } else {
+      setSubscription(null)
+    }
+  }
+
+  // =====================================================
+  // 🔹 AUTH BOOTSTRAP + LISTENER (REFRESH SAFE)
+  // =====================================================
   useEffect(() => {
     let mounted = true
 
-    // 🔑 STEP 1: Restore session on refresh
-    supabase.auth.getSession().then(({ data }) => {
+    const bootstrap = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+
       if (!mounted) return
 
-      setUser(data.session?.user ?? null)
+      const currentUser = session?.user ?? null
+      setUser(currentUser)
+
+      if (currentUser?.email) {
+        await fetchSubscription(currentUser.email)
+      } else {
+        setSubscription(null)
+      }
+
+      setAuthLoading(false)
+    }
+
+    bootstrap()
+
+    const {
+      data: { subscription: authSubscription },
+    } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (!mounted) return
+
+      const currentUser = session?.user ?? null
+      setUser(currentUser)
+
+      if (currentUser?.email) {
+        await fetchSubscription(currentUser.email)
+      } else {
+        setSubscription(null)
+      }
+
       setAuthLoading(false)
     })
 
-    // 🔄 STEP 2: Listen to future auth changes
-    const { data: listener } = supabase.auth.onAuthStateChange(
-      (event, session) => {
-        if (!mounted) return
-
-        // IMPORTANT: INITIAL_SESSION fires on refresh
-        if (event === "INITIAL_SESSION") {
-          setUser(session?.user ?? null)
-          setAuthLoading(false)
-          return
-        }
-
-        if (event === "SIGNED_IN") {
-          setUser(session?.user ?? null)
-          setAuthLoading(false)
-        }
-
-        if (event === "SIGNED_OUT") {
-          setUser(null)
-          setSubscription(null)
-          setAuthLoading(false)
-        }
-      }
-    )
-
     return () => {
       mounted = false
-      listener.subscription.unsubscribe()
+      authSubscription.unsubscribe()
     }
   }, [])
+
+  // =====================================================
+  // 🔹 LOGOUT
+  // =====================================================
+  const logout = async () => {
+    await supabase.auth.signOut()
+    setUser(null)
+    setSubscription(null)
+  }
 
   return (
     <AuthContext.Provider
@@ -56,6 +110,7 @@ export function AuthProvider({ children }) {
         user,
         subscription,
         authLoading,
+        logout,
       }}
     >
       {children}
@@ -63,6 +118,4 @@ export function AuthProvider({ children }) {
   )
 }
 
-export function useAuth() {
-  return useContext(AuthContext)
-}
+export const useAuth = () => useContext(AuthContext)
