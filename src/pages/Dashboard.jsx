@@ -49,6 +49,7 @@ export default function Dashboard() {
   const filteredJobs = useMemo(() => {
     let result = [...jobs]
 
+    // 1. Apply Filters
     if (category) {
       result = result.filter(j => j.job_category === category)
     }
@@ -68,6 +69,10 @@ export default function Dashboard() {
         j.company?.toLowerCase().includes(q)
       )
     }
+
+    // 2. Sort by Serial (Descending: Newest/Highest First)
+    // We use b - a to put larger numbers at the start of the array
+    result.sort((a, b) => b.serial - a.serial)
 
     return result
   }, [jobs, category, salary, experience, search])
