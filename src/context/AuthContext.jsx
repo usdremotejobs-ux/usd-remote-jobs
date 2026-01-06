@@ -15,10 +15,9 @@ export const AuthProvider = ({ children }) => {
   const [authLoading, setAuthLoading] = useState(true)
   
   const subscriptionCache = useRef(null)
-  const retryCount = useRef(0)
-  const maxRetries = 2
+  const hasInitialized = useRef(false)
 
-  // ✅ LOAD FROM LOCALSTORAGE on mount
+  // ✅ LOAD FROM LOCALSTORAGE IMMEDIATELY on mount
   useEffect(() => {
     try {
       const cached = localStorage.getItem(CACHE_KEYS.SUBSCRIPTION)
@@ -26,12 +25,12 @@ export const AuthProvider = ({ children }) => {
       
       if (cached && timestamp) {
         const age = Date.now() - parseInt(timestamp)
-        // Use cache if less than 5 minutes old
-        if (age < 5 * 60 * 1000) {
+        // Use cache if less than 10 minutes old (increased from 5)
+        if (age < 10 * 60 * 1000) {
           const parsedSub = JSON.parse(cached)
           subscriptionCache.current = parsedSub
           setSubscription(parsedSub)
-          console.log('Loaded subscription from cache')
+          console.log('✅ Loaded subscription from cache')
         }
       }
     } catch (err) {
@@ -49,8 +48,8 @@ export const AuthProvider = ({ children }) => {
     }
 
     try {
-      // ✅ FASTER TIMEOUT
-      const timeoutDuration = isInitialLoad ? 5000 : 3000
+      // ✅ MUCH FASTER TIMEOUT
+      const timeoutDuration = isInitialLoad ? 3000 : 2000
       
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Subscription fetch timeout')), timeoutDuration)
@@ -64,13 +63,11 @@ export const AuthProvider = ({ children }) => {
 
       const { data, error } = await Promise.race([fetchPromise, timeoutPromise])
 
-      retryCount.current = 0
-
       if (error && error.code !== 'PGRST116') {
         console.error("Subscription fetch error:", error)
         
         if (subscriptionCache.current) {
-          console.log("Using cached subscription due to error")
+          console.log("⚠️ Using cached subscription due to error")
           setSubscription(subscriptionCache.current)
         } else {
           setSubscription(null)
@@ -115,15 +112,8 @@ export const AuthProvider = ({ children }) => {
     } catch (err) {
       console.error("Subscription fetch error:", err)
       
-      if (isInitialLoad && retryCount.current < maxRetries) {
-        retryCount.current++
-        console.log(`Retrying subscription fetch (${retryCount.current}/${maxRetries})...`)
-        await new Promise(resolve => setTimeout(resolve, 800))
-        return fetchSubscription(email, isInitialLoad)
-      }
-      
       if (err.message === 'Subscription fetch timeout' && subscriptionCache.current) {
-        console.log("Timeout - using cached subscription")
+        console.log("⏱️ Timeout - using cached subscription")
         setSubscription(subscriptionCache.current)
       } else if (!subscriptionCache.current) {
         setSubscription(null)
@@ -133,18 +123,38 @@ export const AuthProvider = ({ children }) => {
 
   useEffect(() => {
     let mounted = true
-    let bootstrapTimeout = null
 
     const bootstrap = async () => {
       try {
-        // ✅ FASTER TIMEOUT
-        bootstrapTimeout = setTimeout(() => {
-          if (mounted && authLoading) {
-            console.warn("Auth bootstrap timeout - forcing completion")
-            setAuthLoading(false)
+        // ✅ OPTIMISTIC: If we have cached subscription, unlock UI immediately
+        const hasCachedSubscription = subscriptionCache.current !== null
+        
+        if (hasCachedSubscription && !hasInitialized.current) {
+          console.log("⚡ Fast path: Using cached subscription")
+          hasInitialized.current = true
+          
+          // Get session quickly and unlock UI
+          const { data } = await supabase.auth.getSession()
+          if (!mounted) return
+          
+          const currentUser = data.session?.user ?? null
+          setUser(currentUser)
+          
+          // ✅ UNLOCK UI IMMEDIATELY
+          setAuthLoading(false)
+          
+          // ✅ VALIDATE IN BACKGROUND (non-blocking)
+          if (currentUser?.email) {
+            fetchSubscription(currentUser.email, true).catch(err => {
+              console.error("Background subscription validation failed:", err)
+            })
           }
-        }, 6000)
+          return
+        }
 
+        // ✅ SLOW PATH: No cache, must wait
+        console.log("🐌 Slow path: No cache, fetching fresh data")
+        
         const { data } = await supabase.auth.getSession()
         if (!mounted) return
 
@@ -159,6 +169,9 @@ export const AuthProvider = ({ children }) => {
           localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
           localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
         }
+        
+        hasInitialized.current = true
+        
       } catch (err) {
         console.error("Auth bootstrap failed", err)
         if (mounted) {
@@ -168,7 +181,6 @@ export const AuthProvider = ({ children }) => {
           }
         }
       } finally {
-        if (bootstrapTimeout) clearTimeout(bootstrapTimeout)
         if (mounted) setAuthLoading(false)
       }
     }
@@ -180,15 +192,18 @@ export const AuthProvider = ({ children }) => {
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return
 
-      console.log("Auth state change:", event)
+      console.log("🔐 Auth state change:", event)
 
       try {
         if (event === 'TOKEN_REFRESHED') {
           const currentUser = session?.user ?? null
           setUser(currentUser)
           
+          // Non-blocking background refresh
           if (currentUser?.email) {
-            await fetchSubscription(currentUser.email, false)
+            fetchSubscription(currentUser.email, false).catch(err => {
+              console.error("Background refresh failed:", err)
+            })
           }
           return
         }
@@ -202,6 +217,7 @@ export const AuthProvider = ({ children }) => {
           return
         }
 
+        // For other events
         const currentUser = session?.user ?? null
         setUser(currentUser)
 
@@ -215,16 +231,11 @@ export const AuthProvider = ({ children }) => {
         }
       } catch (err) {
         console.error("Auth state change error:", err)
-      } finally {
-        if (mounted && event !== 'TOKEN_REFRESHED') {
-          setAuthLoading(false)
-        }
       }
     })
 
     return () => {
       mounted = false
-      if (bootstrapTimeout) clearTimeout(bootstrapTimeout)
       authSub.unsubscribe()
     }
   }, [])
@@ -234,6 +245,7 @@ export const AuthProvider = ({ children }) => {
     setUser(null)
     setSubscription(null)
     subscriptionCache.current = null
+    hasInitialized.current = false
     localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
     localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
   }
