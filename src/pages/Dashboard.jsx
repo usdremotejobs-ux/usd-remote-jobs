@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react"
+import { useSearchParams } from "react-router-dom" // ✅ NEW
 import Navbar from "../components/Navbar"
 import JobCard from "../components/JobCard"
-import { Search, X } from "lucide-react"
+import { Search, X, TrendingUp } from "lucide-react"
 import { useJobs } from "../hooks/useJobs"
 
 /**
@@ -10,24 +11,41 @@ import { useJobs } from "../hooks/useJobs"
  * - No Supabase calls
  * - No auth logic
  * - No race conditions
+ * - ✅ Persists pagination in URL
  */
 export default function Dashboard() {
   const { jobs, loading, error, refresh } = useJobs()
+  const [searchParams, setSearchParams] = useSearchParams() // ✅ NEW
 
   // 🔎 Filters
   const [category, setCategory] = useState("")
   const [salary, setSalary] = useState("")
   const [experience, setExperience] = useState("")
   const [search, setSearch] = useState("")
+  const [sortBy, setSortBy] = useState("latest") // ✅ Sort option
 
-  // 📄 Pagination
-  const [currentPage, setCurrentPage] = useState(1)
+  // 📄 Pagination - ✅ Read from URL, default to 1
+  const [currentPage, setCurrentPage] = useState(() => {
+    const page = parseInt(searchParams.get('page')) || 1
+    return page
+  })
+
   const JOBS_PER_PAGE = 10
+
+  // ✅ Sync URL when page changes
+  useEffect(() => {
+    if (currentPage === 1) {
+      searchParams.delete('page') // Remove page param if it's 1
+    } else {
+      searchParams.set('page', currentPage.toString())
+    }
+    setSearchParams(searchParams, { replace: true })
+  }, [currentPage])
 
   // 🔁 Reset page when filters change
   useEffect(() => {
     setCurrentPage(1)
-  }, [category, salary, experience, search])
+  }, [category, salary, experience, search, sortBy])
 
   // 🧠 Derived filter options (from real data)
   const categories = useMemo(
@@ -45,11 +63,10 @@ export default function Dashboard() {
     [jobs]
   )
 
-  // 🔍 Filtered jobs
+  // 🔍 Filtered and Sorted jobs
   const filteredJobs = useMemo(() => {
     let result = [...jobs]
 
-    // 1. Apply Filters
     if (category) {
       result = result.filter(j => j.job_category === category)
     }
@@ -70,12 +87,17 @@ export default function Dashboard() {
       )
     }
 
-    // 2. Sort by Serial (Descending: Newest/Highest First)
-    // We use b - a to put larger numbers at the start of the array
-    result.sort((a, b) => b.serial - a.serial)
+    // ✅ SORT BY SERIAL OR DATE
+    if (sortBy === "latest") {
+      result.sort((a, b) => (b.serial || 0) - (a.serial || 0))
+    } else if (sortBy === "oldest") {
+      result.sort((a, b) => (a.serial || 0) - (b.serial || 0))
+    } else if (sortBy === "company") {
+      result.sort((a, b) => (a.company || "").localeCompare(b.company || ""))
+    }
 
     return result
-  }, [jobs, category, salary, experience, search])
+  }, [jobs, category, salary, experience, search, sortBy])
 
   // 📄 Pagination logic
   const totalPages = Math.ceil(filteredJobs.length / JOBS_PER_PAGE)
@@ -91,7 +113,13 @@ export default function Dashboard() {
     setSalary("")
     setExperience("")
     setSearch("")
+    setSortBy("latest")
   }
+
+  // ✅ Get max serial for "NEW" badge detection
+  const maxSerial = useMemo(() => {
+    return Math.max(...jobs.map(j => j.serial || 0), 0)
+  }, [jobs])
 
   return (
     <>
@@ -131,6 +159,18 @@ export default function Dashboard() {
 
         {/* FILTER BAR */}
         <div className="filters-bar" style={{ justifyContent: "center" }}>
+          {/* ✅ Sort Dropdown */}
+          <select
+            className="select"
+            value={sortBy}
+            onChange={e => setSortBy(e.target.value)}
+            style={{ fontWeight: sortBy === "latest" ? "600" : "400" }}
+          >
+            <option value="latest">🔥 Latest First</option>
+            <option value="oldest">📅 Oldest First</option>
+            <option value="company">🏢 Company A-Z</option>
+          </select>
+
           <select
             className="select"
             value={category}
@@ -170,12 +210,24 @@ export default function Dashboard() {
             ))}
           </select>
 
-          {(category || salary || experience || search) && (
+          {(category || salary || experience || search || sortBy !== "latest") && (
             <button className="btn btn-secondary" onClick={clearFilters}>
               <X size={16} style={{ marginRight: "4px" }} /> Clear
             </button>
           )}
         </div>
+
+        {/* ✅ Results Count */}
+        {!loading && !error && (
+          <div style={{ textAlign: "center", margin: "20px 0", color: "var(--text-muted)", fontSize: "0.9rem" }}>
+            {filteredJobs.length === jobs.length ? (
+              <span>Showing all {jobs.length} jobs</span>
+            ) : (
+              <span>Found {filteredJobs.length} of {jobs.length} jobs</span>
+            )}
+            {totalPages > 1 && <span> • Page {currentPage} of {totalPages}</span>}
+          </div>
+        )}
 
         {/* ERROR STATE */}
         {error && (
@@ -198,7 +250,13 @@ export default function Dashboard() {
               />
             ))
           ) : currentJobs.length > 0 ? (
-            currentJobs.map(job => <JobCard key={job.id} job={job} />)
+            currentJobs.map(job => (
+              <JobCard 
+                key={job.id} 
+                job={job} 
+                isNew={job.serial && job.serial >= maxSerial - 5} // ✅ Mark top 5 as new
+              />
+            ))
           ) : (
             <div
               style={{
