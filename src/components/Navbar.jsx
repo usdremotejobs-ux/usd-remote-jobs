@@ -19,7 +19,11 @@ export default function Navbar() {
                 </div>
 
                 <div style={{ display: 'flex', gap: '12px' }}>
-                    <button className="btn btn-secondary">
+                    {/* ✅ FIXED: Added onClick handler */}
+                    <button 
+                        className="btn btn-secondary" 
+                        onClick={() => navigate('/dashboard')}
+                    >
                         <LayoutDashboard size={16} style={{ marginRight: '6px' }} />
                         Dashboard
                     </button>
