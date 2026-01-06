@@ -3,68 +3,15 @@ import { supabase } from "../supabaseClient"
 
 const AuthContext = createContext(null)
 
-const CACHE_KEYS = {
-  SUBSCRIPTION: 'app_subscription_cache',
-  TIMESTAMP: 'app_subscription_timestamp'
-}
-
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null)
   const [subscription, setSubscription] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
   
-  const subscriptionCache = useRef(null)
-  const isFetchingSubscription = useRef(false)
-  const lastFetchEmail = useRef(null)
+  const mountedRef = useRef(true)
 
-  // Helper to compare users and prevent re-renders if they are identical
-  const safeSetUser = (newUser) => {
-    setUser(prevUser => {
-      // If both are null, no change
-      if (!prevUser && !newUser) return null
-      // If one is null and other isn't, change
-      if (!prevUser || !newUser) return newUser
-      // If emails match, don't update state (prevents effect loops)
-      if (prevUser.email === newUser.email && prevUser.id === newUser.id) {
-        return prevUser
-      }
-      return newUser
-    })
-  }
-
-  // ✅ LOAD FROM LOCALSTORAGE ON MOUNT
-  useEffect(() => {
-    try {
-      const cached = localStorage.getItem(CACHE_KEYS.SUBSCRIPTION)
-      const timestamp = localStorage.getItem(CACHE_KEYS.TIMESTAMP)
-      
-      if (cached && timestamp) {
-        const age = Date.now() - parseInt(timestamp)
-        if (age < 10 * 60 * 1000) { // 10 mins
-          const parsedSub = JSON.parse(cached)
-          subscriptionCache.current = parsedSub
-          // We don't setSubscription state here yet, we wait for auth to confirm user match
-        }
-      }
-    } catch (err) {
-      console.error('Failed to load cache:', err)
-    }
-  }, [])
-
-  const fetchSubscription = async (email, isInitialLoad = false) => {
-    if (!email) {
-      setSubscription(null)
-      return
-    }
-
-    // prevent race conditions
-    if (isFetchingSubscription.current && lastFetchEmail.current === email) {
-      return
-    }
-
-    isFetchingSubscription.current = true
-    lastFetchEmail.current = email
-
+  const fetchSubscription = async (email) => {
+    if (!email) return null
     try {
       const { data, error } = await supabase
         .from("subscriptions")
@@ -72,121 +19,97 @@ export const AuthProvider = ({ children }) => {
         .eq("email", email)
         .single()
 
-      if (error && error.code !== 'PGRST116') {
-        // On error, if we have cache, keep using it
-        if (subscriptionCache.current) {
-            setSubscription(subscriptionCache.current)
-        }
-        return
-      }
+      if (error || !data) return null
 
-      let validSubscription = null
-      if (data) {
-          if (data.plan === "lifetime" && data.status === "active") {
-            validSubscription = data
-          } else {
-            const today = new Date()
-            const expiry = new Date(data.expiry_date)
-            if (data.status === "active" && expiry >= today) {
-              validSubscription = data
-            }
-          }
-      }
+      if (data.plan === "lifetime" && data.status === "active") return data
 
-      // Update State
-      setSubscription(validSubscription)
-      subscriptionCache.current = validSubscription
+      // Date Logic: Ignore time of day
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      const expiry = new Date(data.expiry_date)
+      expiry.setHours(0, 0, 0, 0)
 
-      // Update LocalStorage
-      if (validSubscription) {
-        localStorage.setItem(CACHE_KEYS.SUBSCRIPTION, JSON.stringify(validSubscription))
-        localStorage.setItem(CACHE_KEYS.TIMESTAMP, Date.now().toString())
-      } else {
-        localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
-        localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
-      }
-
+      if (data.status === "active" && expiry >= today) return data
+      return null
     } catch (err) {
-      console.error("Subscription fetch error:", err)
-    } finally {
-      isFetchingSubscription.current = false
+      console.error(err)
+      return null
     }
   }
 
   useEffect(() => {
-    let mounted = true
+    mountedRef.current = true
 
-    const bootstrap = async () => {
+    const initializeAuth = async () => {
       try {
-        const { data } = await supabase.auth.getSession()
-        if (!mounted) return
+        // 1. Check for Magic Link Token in URL
+        // If this exists, Supabase is still working. We MUST NOT turn off loading yet.
+        const isMagicLink = window.location.hash.includes('access_token') 
+                            || window.location.search.includes('code=');
+
+        const { data: { session } } = await supabase.auth.getSession()
+        const currentUser = session?.user ?? null
         
-        const currentUser = data.session?.user ?? null
-        safeSetUser(currentUser)
-        
-        // Logic: If we have a user, we MUST fetch/verify subscription before releasing loading
+        let subData = null
         if (currentUser?.email) {
-            
-            // 1. Check if cache matches
-            const cacheMatches = subscriptionCache.current?.email === currentUser.email
-            
-            if (cacheMatches) {
-                // Optimistic: Set data immediately
-                setSubscription(subscriptionCache.current)
-                // Refresh in background
-                fetchSubscription(currentUser.email)
-            } else {
-                // No cache match: Must await fetch
-                await fetchSubscription(currentUser.email)
+          subData = await fetchSubscription(currentUser.email)
+        }
+
+        if (mountedRef.current) {
+          setUser(currentUser)
+          if (subData || !currentUser) setSubscription(subData)
+        }
+
+        // 🟢 THE FIX: 
+        // Only stop loading if we are NOT waiting for a magic link to resolve.
+        // If it IS a magic link, the onAuthStateChange listener below will handle the unlock.
+        if (mountedRef.current && !isMagicLink) {
+            setAuthLoading(false)
+        }
+
+      } catch (error) {
+        console.error("Auth init failed:", error)
+        if (mountedRef.current) setAuthLoading(false)
+      }
+    }
+
+    initializeAuth()
+
+    const { data: { subscription: authListener } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (event === 'SIGNED_OUT') {
+           setUser(null)
+           setSubscription(null)
+           if (mountedRef.current) setAuthLoading(false)
+           return
+        }
+
+        const currentUser = session?.user ?? null
+        if (mountedRef.current) setUser(currentUser)
+
+        if (currentUser?.email) {
+            const subData = await fetchSubscription(currentUser.email)
+            if (mountedRef.current) {
+                if (subData) setSubscription(subData)
+                else if (event === 'INITIAL_SESSION') setSubscription(null)
             }
-        } else {
-            setSubscription(null)
         }
         
-      } catch (err) {
-        console.error("Auth bootstrap failed", err)
-      } finally {
-        if (mounted) setAuthLoading(false)
+        // Always unlock loading here. This catches the moment the Magic Link finishes.
+        if (mountedRef.current) setAuthLoading(false)
       }
-    }
-
-    bootstrap()
-
-    const { data: { subscription: authListener } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (!mounted) return
-      
-      const currentUser = session?.user ?? null
-      safeSetUser(currentUser)
-
-      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION') {
-         if (currentUser?.email) {
-             // If we already have a subscription loaded for this exact email, don't re-fetch on simple token refresh
-             if (subscriptionCache.current?.email === currentUser.email) {
-                 if (!subscription) setSubscription(subscriptionCache.current)
-             } else {
-                 await fetchSubscription(currentUser.email)
-             }
-         }
-      } else if (event === 'SIGNED_OUT') {
-          setSubscription(null)
-          subscriptionCache.current = null
-          localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
-      }
-    })
+    )
 
     return () => {
-      mounted = false
+      mountedRef.current = false
       authListener.unsubscribe()
     }
-    // 🔴 CRITICAL FIX: Empty dependency array. Do not put [user] here.
-  }, []) 
+  }, [])
 
   const logout = async () => {
     await supabase.auth.signOut()
-    safeSetUser(null)
+    setUser(null)
     setSubscription(null)
-    subscriptionCache.current = null
-    localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
   }
 
   return (
