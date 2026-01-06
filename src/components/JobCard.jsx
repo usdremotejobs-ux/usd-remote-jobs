@@ -1,11 +1,59 @@
 import { useNavigate } from 'react-router-dom'
-import { Briefcase, MapPin, DollarSign, Clock } from 'lucide-react'
+import { Briefcase, DollarSign, Clock } from 'lucide-react'
+import { supabase } from '../supabaseClient'
+import { JOB_CACHE, CACHE_KEY_PREFIX, CACHE_TTL } from '../utils/jobCache'
 
 export default function JobCard({ job }) {
     const navigate = useNavigate()
 
+    // ✅ PREFETCH on hover to make navigation instant
+    const prefetchJob = async () => {
+        // Check memory cache first
+        const cached = JOB_CACHE.get(job.id)
+        if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+            return
+        }
+
+        try {
+            const { data, error } = await supabase
+                .from("jobs")
+                .select("*")
+                .eq("id", job.id)
+                .single()
+
+            if (!error && data) {
+                const cacheEntry = {
+                    data,
+                    timestamp: Date.now()
+                }
+                
+                // Save to memory
+                JOB_CACHE.set(job.id, cacheEntry)
+                
+                // Save to localStorage
+                try {
+                    localStorage.setItem(
+                        CACHE_KEY_PREFIX + job.id,
+                        JSON.stringify(cacheEntry)
+                    )
+                } catch (err) {
+                    console.log('LocalStorage full, skipping cache')
+                }
+                
+                console.log(`Prefetched job ${job.id}`)
+            }
+        } catch (err) {
+            console.log('Prefetch failed:', err)
+        }
+    }
+
     return (
-        <div className="card job-card" onClick={() => navigate(`/job/${job.id}`)} style={{ cursor: 'pointer' }}>
+        <div 
+            className="card job-card" 
+            onClick={() => navigate(`/job/${job.id}`)} 
+            onMouseEnter={prefetchJob}
+            style={{ cursor: 'pointer' }}
+        >
             <div className="job-logo">
                 {job.company_logo_url ? (
                     <img src={job.company_logo_url} alt={job.company} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '12px' }} />
@@ -26,7 +74,6 @@ export default function JobCard({ job }) {
             </div>
 
             <div className="job-actions">
-                {/* On mobile this wraps, on desktop it's to the right */}
                 <button className="btn btn-secondary">
                     View Details
                 </button>
