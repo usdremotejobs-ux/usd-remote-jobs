@@ -5,7 +5,7 @@ import { useAuth } from "../context/AuthContext"
 // ✅ LOCALSTORAGE CACHE
 const CACHE_KEY = 'jobs_cache'
 const CACHE_TIMESTAMP_KEY = 'jobs_cache_timestamp'
-const CACHE_TTL = 1000 * 60 * 5 // 5 minutes
+const CACHE_TTL = 1000 * 60 * 10 // 10 minutes (increased from 5)
 
 // Try to load from localStorage on import
 let JOBS_CACHE = null
@@ -20,7 +20,7 @@ try {
     if (age < CACHE_TTL) {
       JOBS_CACHE = JSON.parse(cached)
       LAST_FETCH_AT = parseInt(timestamp)
-      console.log('Loaded jobs from localStorage cache')
+      console.log('✅ Loaded jobs from localStorage cache')
     }
   }
 } catch (err) {
@@ -31,12 +31,13 @@ export function useJobs() {
   const { user, authLoading } = useAuth()
 
   const [jobs, setJobs] = useState(JOBS_CACHE || [])
-  const [loading, setLoading] = useState(!JOBS_CACHE)
+  const [loading, setLoading] = useState(false) // ✅ Changed: Don't show loading if we have cache
   const [error, setError] = useState(null)
 
   const isFetching = useRef(false)
+  const hasInitialFetch = useRef(false)
 
-  const fetchJobs = async ({ force = false } = {}) => {
+  const fetchJobs = async ({ force = false, silent = false } = {}) => {
     if (!user) {
       setLoading(false)
       return
@@ -46,33 +47,38 @@ export function useJobs() {
       return
     }
 
-    // 🧠 Cache check - OPTIMISTIC: show cached data immediately
+    // 🧠 Cache check
     if (
       !force &&
       JOBS_CACHE &&
       LAST_FETCH_AT &&
       Date.now() - LAST_FETCH_AT < CACHE_TTL
     ) {
-      setJobs(JOBS_CACHE)
+      if (!hasInitialFetch.current) {
+        setJobs(JOBS_CACHE)
+        hasInitialFetch.current = true
+      }
       setLoading(false)
       return
     }
 
-    // ✅ OPTIMISTIC: If we have cache, show it while fetching fresh data
-    if (JOBS_CACHE && JOBS_CACHE.length > 0 && !force) {
+    // ✅ OPTIMISTIC: If we have cache, show it and fetch silently
+    if (JOBS_CACHE && JOBS_CACHE.length > 0) {
       setJobs(JOBS_CACHE)
-      setLoading(false) // Don't show loading if we have cached data
+      if (!silent) {
+        setLoading(false) // Don't show loading spinner
+      }
     } else {
-      setLoading(true)
+      setLoading(true) // Only show loading if no cache
     }
 
     isFetching.current = true
     setError(null)
 
     try {
-      // ✅ FASTER TIMEOUT
+      // ✅ AGGRESSIVE TIMEOUT
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Request timeout')), 4000)
+        setTimeout(() => reject(new Error('Request timeout')), 3000)
       )
 
       const fetchPromise = supabase
@@ -84,7 +90,13 @@ export function useJobs() {
 
       if (error) {
         console.error("❌ Jobs fetch failed:", error)
-        setError("Failed to load jobs. Please refresh.")
+        // If we have cache, don't show error - just use cache
+        if (JOBS_CACHE && JOBS_CACHE.length > 0) {
+          console.log("⚠️ Using cached jobs due to fetch error")
+          setJobs(JOBS_CACHE)
+        } else {
+          setError("Failed to load jobs. Please refresh.")
+        }
         setLoading(false)
         isFetching.current = false
         return
@@ -103,21 +115,32 @@ export function useJobs() {
 
       setJobs(JOBS_CACHE)
       setLoading(false)
+      hasInitialFetch.current = true
     } catch (err) {
       console.error("❌ Jobs fetch error:", err)
-      setError(err.message === 'Request timeout' 
-        ? "Request timed out. Please refresh." 
-        : "Failed to load jobs. Please refresh.")
-      setLoading(false)
+      
+      // If timeout and we have cache, use it
+      if (err.message === 'Request timeout' && JOBS_CACHE && JOBS_CACHE.length > 0) {
+        console.log("⏱️ Timeout - using cached jobs")
+        setJobs(JOBS_CACHE)
+        setLoading(false)
+      } else {
+        setError(err.message === 'Request timeout' 
+          ? "Request timed out. Using cached data." 
+          : "Failed to load jobs.")
+        setLoading(false)
+      }
     } finally {
       isFetching.current = false
     }
   }
 
-  // ✅ Fetch only when auth is READY
+  // ✅ Fetch when auth is ready
   useEffect(() => {
     if (!authLoading && user) {
-      fetchJobs()
+      // If we already have cache, fetch silently in background
+      const hasCachedData = JOBS_CACHE && JOBS_CACHE.length > 0
+      fetchJobs({ silent: hasCachedData })
     } else if (!authLoading && !user) {
       setLoading(false)
     }
