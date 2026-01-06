@@ -2,9 +2,30 @@ import { useEffect, useState, useRef } from "react"
 import { supabase } from "../supabaseClient"
 import { useAuth } from "../context/AuthContext"
 
+// ✅ LOCALSTORAGE CACHE
+const CACHE_KEY = 'jobs_cache'
+const CACHE_TIMESTAMP_KEY = 'jobs_cache_timestamp'
+const CACHE_TTL = 1000 * 60 * 5 // 5 minutes
+
+// Try to load from localStorage on import
 let JOBS_CACHE = null
 let LAST_FETCH_AT = null
-const CACHE_TTL = 1000 * 60 * 5 // 5 minutes
+
+try {
+  const cached = localStorage.getItem(CACHE_KEY)
+  const timestamp = localStorage.getItem(CACHE_TIMESTAMP_KEY)
+  
+  if (cached && timestamp) {
+    const age = Date.now() - parseInt(timestamp)
+    if (age < CACHE_TTL) {
+      JOBS_CACHE = JSON.parse(cached)
+      LAST_FETCH_AT = parseInt(timestamp)
+      console.log('Loaded jobs from localStorage cache')
+    }
+  }
+} catch (err) {
+  console.error('Failed to load jobs cache:', err)
+}
 
 export function useJobs() {
   const { user, authLoading } = useAuth()
@@ -16,7 +37,6 @@ export function useJobs() {
   const isFetching = useRef(false)
 
   const fetchJobs = async ({ force = false } = {}) => {
-    // ✅ EARLY RETURN WITH PROPER LOADING STATE
     if (!user) {
       setLoading(false)
       return
@@ -26,7 +46,7 @@ export function useJobs() {
       return
     }
 
-    // 🧠 Cache check
+    // 🧠 Cache check - OPTIMISTIC: show cached data immediately
     if (
       !force &&
       JOBS_CACHE &&
@@ -38,14 +58,21 @@ export function useJobs() {
       return
     }
 
+    // ✅ OPTIMISTIC: If we have cache, show it while fetching fresh data
+    if (JOBS_CACHE && JOBS_CACHE.length > 0 && !force) {
+      setJobs(JOBS_CACHE)
+      setLoading(false) // Don't show loading if we have cached data
+    } else {
+      setLoading(true)
+    }
+
     isFetching.current = true
-    setLoading(true)
     setError(null)
 
     try {
-      // ✅ ADD TIMEOUT
+      // ✅ FASTER TIMEOUT
       const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Request timeout')), 10000)
+        setTimeout(() => reject(new Error('Request timeout')), 4000)
       )
 
       const fetchPromise = supabase
@@ -66,6 +93,14 @@ export function useJobs() {
       JOBS_CACHE = data || []
       LAST_FETCH_AT = Date.now()
 
+      // ✅ SAVE TO LOCALSTORAGE
+      try {
+        localStorage.setItem(CACHE_KEY, JSON.stringify(JOBS_CACHE))
+        localStorage.setItem(CACHE_TIMESTAMP_KEY, LAST_FETCH_AT.toString())
+      } catch (err) {
+        console.error('Failed to cache jobs:', err)
+      }
+
       setJobs(JOBS_CACHE)
       setLoading(false)
     } catch (err) {
@@ -84,7 +119,6 @@ export function useJobs() {
     if (!authLoading && user) {
       fetchJobs()
     } else if (!authLoading && !user) {
-      // Clear loading state if no user
       setLoading(false)
     }
   }, [authLoading, user])
