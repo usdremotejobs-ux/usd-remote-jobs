@@ -3,26 +3,54 @@ import { supabase } from "../supabaseClient"
 
 const AuthContext = createContext(null)
 
+// ✅ CACHE KEYS
+const CACHE_KEYS = {
+  SUBSCRIPTION: 'app_subscription_cache',
+  TIMESTAMP: 'app_subscription_timestamp'
+}
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null)
   const [subscription, setSubscription] = useState(null)
   const [authLoading, setAuthLoading] = useState(true)
   
-  // ✅ Cache subscription to preserve it during timeouts
   const subscriptionCache = useRef(null)
   const retryCount = useRef(0)
   const maxRetries = 2
+
+  // ✅ LOAD FROM LOCALSTORAGE on mount
+  useEffect(() => {
+    try {
+      const cached = localStorage.getItem(CACHE_KEYS.SUBSCRIPTION)
+      const timestamp = localStorage.getItem(CACHE_KEYS.TIMESTAMP)
+      
+      if (cached && timestamp) {
+        const age = Date.now() - parseInt(timestamp)
+        // Use cache if less than 5 minutes old
+        if (age < 5 * 60 * 1000) {
+          const parsedSub = JSON.parse(cached)
+          subscriptionCache.current = parsedSub
+          setSubscription(parsedSub)
+          console.log('Loaded subscription from cache')
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load cache:', err)
+    }
+  }, [])
 
   const fetchSubscription = async (email, isInitialLoad = false) => {
     if (!email) {
       setSubscription(null)
       subscriptionCache.current = null
+      localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
+      localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
       return
     }
 
     try {
-      // ✅ OPTIMIZED - Reduced timeout
-      const timeoutDuration = isInitialLoad ? 6000 : 4000
+      // ✅ FASTER TIMEOUT
+      const timeoutDuration = isInitialLoad ? 5000 : 3000
       
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Subscription fetch timeout')), timeoutDuration)
@@ -36,15 +64,11 @@ export const AuthProvider = ({ children }) => {
 
       const { data, error } = await Promise.race([fetchPromise, timeoutPromise])
 
-      // Reset retry count on success
       retryCount.current = 0
 
-      // ✅ Only clear subscription on real errors, not timeout
       if (error && error.code !== 'PGRST116') {
-        // PGRST116 = not found, which means no subscription
         console.error("Subscription fetch error:", error)
         
-        // Keep cached subscription on network errors
         if (subscriptionCache.current) {
           console.log("Using cached subscription due to error")
           setSubscription(subscriptionCache.current)
@@ -57,6 +81,8 @@ export const AuthProvider = ({ children }) => {
       if (!data) {
         setSubscription(null)
         subscriptionCache.current = null
+        localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
+        localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
         return
       }
 
@@ -77,23 +103,29 @@ export const AuthProvider = ({ children }) => {
       setSubscription(validSubscription)
       subscriptionCache.current = validSubscription
 
+      // ✅ SAVE TO LOCALSTORAGE
+      if (validSubscription) {
+        localStorage.setItem(CACHE_KEYS.SUBSCRIPTION, JSON.stringify(validSubscription))
+        localStorage.setItem(CACHE_KEYS.TIMESTAMP, Date.now().toString())
+      } else {
+        localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
+        localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
+      }
+
     } catch (err) {
       console.error("Subscription fetch error:", err)
       
-      // ✅ RETRY LOGIC for initial load
       if (isInitialLoad && retryCount.current < maxRetries) {
         retryCount.current++
         console.log(`Retrying subscription fetch (${retryCount.current}/${maxRetries})...`)
-        await new Promise(resolve => setTimeout(resolve, 1000))
+        await new Promise(resolve => setTimeout(resolve, 800))
         return fetchSubscription(email, isInitialLoad)
       }
       
-      // ✅ On timeout, keep cached subscription
       if (err.message === 'Subscription fetch timeout' && subscriptionCache.current) {
         console.log("Timeout - using cached subscription")
         setSubscription(subscriptionCache.current)
       } else if (!subscriptionCache.current) {
-        // No cached subscription available
         setSubscription(null)
       }
     }
@@ -105,13 +137,13 @@ export const AuthProvider = ({ children }) => {
 
     const bootstrap = async () => {
       try {
-        // ✅ OPTIMIZED - Reduced timeout
+        // ✅ FASTER TIMEOUT
         bootstrapTimeout = setTimeout(() => {
           if (mounted && authLoading) {
             console.warn("Auth bootstrap timeout - forcing completion")
             setAuthLoading(false)
           }
-        }, 8000)
+        }, 6000)
 
         const { data } = await supabase.auth.getSession()
         if (!mounted) return
@@ -120,16 +152,17 @@ export const AuthProvider = ({ children }) => {
         setUser(currentUser)
 
         if (currentUser?.email) {
-          await fetchSubscription(currentUser.email, true) // isInitialLoad = true
+          await fetchSubscription(currentUser.email, true)
         } else {
           setSubscription(null)
           subscriptionCache.current = null
+          localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
+          localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
         }
       } catch (err) {
         console.error("Auth bootstrap failed", err)
         if (mounted) {
           setUser(null)
-          // Don't clear subscription cache on bootstrap errors
           if (!subscriptionCache.current) {
             setSubscription(null)
           }
@@ -150,7 +183,6 @@ export const AuthProvider = ({ children }) => {
       console.log("Auth state change:", event)
 
       try {
-        // ✅ HANDLE TOKEN REFRESH WITHOUT FULL LOADING STATE
         if (event === 'TOKEN_REFRESHED') {
           const currentUser = session?.user ?? null
           setUser(currentUser)
@@ -161,15 +193,15 @@ export const AuthProvider = ({ children }) => {
           return
         }
 
-        // ✅ HANDLE SIGN OUT
         if (event === 'SIGNED_OUT') {
           setUser(null)
           setSubscription(null)
           subscriptionCache.current = null
+          localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
+          localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
           return
         }
 
-        // For other events, update normally
         const currentUser = session?.user ?? null
         setUser(currentUser)
 
@@ -178,6 +210,8 @@ export const AuthProvider = ({ children }) => {
         } else {
           setSubscription(null)
           subscriptionCache.current = null
+          localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
+          localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
         }
       } catch (err) {
         console.error("Auth state change error:", err)
@@ -200,6 +234,8 @@ export const AuthProvider = ({ children }) => {
     setUser(null)
     setSubscription(null)
     subscriptionCache.current = null
+    localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
+    localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
   }
 
   return (
