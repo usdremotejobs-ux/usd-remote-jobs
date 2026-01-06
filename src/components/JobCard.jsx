@@ -1,7 +1,35 @@
 import { useNavigate } from 'react-router-dom'
 import { Briefcase, DollarSign, Clock } from 'lucide-react'
 import { supabase } from '../supabaseClient'
-import { JOB_CACHE, CACHE_KEY_PREFIX, CACHE_TTL } from '../utils/jobCache'
+
+// ✅ LOCALSTORAGE CACHE for individual jobs
+const CACHE_KEY_PREFIX = 'job_detail_'
+const CACHE_TTL = 1000 * 60 * 10 // 10 minutes
+
+// ✅ Memory cache for quick access during session
+const JOB_CACHE = new Map()
+
+// Load from localStorage on import
+try {
+  const keys = Object.keys(localStorage)
+  keys.forEach(key => {
+    if (key.startsWith(CACHE_KEY_PREFIX)) {
+      const cached = localStorage.getItem(key)
+      if (cached) {
+        const parsed = JSON.parse(cached)
+        const age = Date.now() - parsed.timestamp
+        if (age < CACHE_TTL) {
+          const jobId = key.replace(CACHE_KEY_PREFIX, '')
+          JOB_CACHE.set(jobId, parsed)
+        } else {
+          localStorage.removeItem(key)
+        }
+      }
+    }
+  })
+} catch (err) {
+  console.error('Failed to load job cache:', err)
+}
 
 export default function JobCard({ job }) {
     const navigate = useNavigate()
@@ -81,3 +109,6 @@ export default function JobCard({ job }) {
         </div>
     )
 }
+
+// Export cache for use in JobDetail
+export { JOB_CACHE, CACHE_KEY_PREFIX, CACHE_TTL }
