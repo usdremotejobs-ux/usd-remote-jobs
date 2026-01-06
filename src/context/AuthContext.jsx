@@ -3,7 +3,6 @@ import { supabase } from "../supabaseClient"
 
 const AuthContext = createContext(null)
 
-// ✅ CACHE KEYS
 const CACHE_KEYS = {
   SUBSCRIPTION: 'app_subscription_cache',
   TIMESTAMP: 'app_subscription_timestamp'
@@ -15,11 +14,25 @@ export const AuthProvider = ({ children }) => {
   const [authLoading, setAuthLoading] = useState(true)
   
   const subscriptionCache = useRef(null)
-  const hasInitialized = useRef(false)
-  const isFetchingSubscription = useRef(false) // ✅ Prevent duplicate fetches
-  const lastFetchEmail = useRef(null) // ✅ Track last fetched email
+  const isFetchingSubscription = useRef(false)
+  const lastFetchEmail = useRef(null)
 
-  // ✅ LOAD FROM LOCALSTORAGE IMMEDIATELY on mount
+  // Helper to compare users and prevent re-renders if they are identical
+  const safeSetUser = (newUser) => {
+    setUser(prevUser => {
+      // If both are null, no change
+      if (!prevUser && !newUser) return null
+      // If one is null and other isn't, change
+      if (!prevUser || !newUser) return newUser
+      // If emails match, don't update state (prevents effect loops)
+      if (prevUser.email === newUser.email && prevUser.id === newUser.id) {
+        return prevUser
+      }
+      return newUser
+    })
+  }
+
+  // ✅ LOAD FROM LOCALSTORAGE ON MOUNT
   useEffect(() => {
     try {
       const cached = localStorage.getItem(CACHE_KEYS.SUBSCRIPTION)
@@ -27,28 +40,10 @@ export const AuthProvider = ({ children }) => {
       
       if (cached && timestamp) {
         const age = Date.now() - parseInt(timestamp)
-        // Use cache if less than 10 minutes old
-        if (age < 10 * 60 * 1000) {
+        if (age < 10 * 60 * 1000) { // 10 mins
           const parsedSub = JSON.parse(cached)
-          
-          // ✅ CRITICAL: Verify cache belongs to current session
-          // Check if Supabase session exists and matches cached email
-          supabase.auth.getSession().then(({ data }) => {
-            const currentEmail = data.session?.user?.email
-            
-            if (currentEmail && parsedSub.email === currentEmail) {
-              // Cache matches current user - safe to use
-              subscriptionCache.current = parsedSub
-              setSubscription(parsedSub)
-              console.log('✅ Loaded subscription from cache (verified)')
-            } else {
-              // Cache is for different user - clear it
-              console.log('⚠️ Cache mismatch - clearing old subscription')
-              localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
-              localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
-              subscriptionCache.current = null
-            }
-          })
+          subscriptionCache.current = parsedSub
+          // We don't setSubscription state here yet, we wait for auth to confirm user match
         }
       }
     } catch (err) {
@@ -59,15 +54,11 @@ export const AuthProvider = ({ children }) => {
   const fetchSubscription = async (email, isInitialLoad = false) => {
     if (!email) {
       setSubscription(null)
-      subscriptionCache.current = null
-      localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
-      localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
       return
     }
 
-    // ✅ PREVENT DUPLICATE FETCHES
+    // prevent race conditions
     if (isFetchingSubscription.current && lastFetchEmail.current === email) {
-      console.log('⏭️ Skipping duplicate subscription fetch')
       return
     }
 
@@ -75,63 +66,38 @@ export const AuthProvider = ({ children }) => {
     lastFetchEmail.current = email
 
     try {
-      // ✅ FAST TIMEOUT
-      const timeoutDuration = 2500 // 2.5 seconds
-      
-      const timeoutPromise = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error('Subscription fetch timeout')), timeoutDuration)
-      )
-
-      const fetchPromise = supabase
+      const { data, error } = await supabase
         .from("subscriptions")
         .select("*")
         .eq("email", email)
         .single()
 
-      const { data, error } = await Promise.race([fetchPromise, timeoutPromise])
-
       if (error && error.code !== 'PGRST116') {
-        console.error("Subscription fetch error:", error)
-        
+        // On error, if we have cache, keep using it
         if (subscriptionCache.current) {
-          console.log("⚠️ Using cached subscription due to error")
-          setSubscription(subscriptionCache.current)
-        } else {
-          setSubscription(null)
+            setSubscription(subscriptionCache.current)
         }
         return
       }
 
-      if (!data) {
-        setSubscription(null)
-        subscriptionCache.current = null
-        localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
-        localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
-        return
-      }
-
-      // Validate subscription
       let validSubscription = null
-
-      if (data.plan === "lifetime" && data.status === "active") {
-        validSubscription = data
-        console.log("✅ Valid lifetime subscription found")
-      } else {
-        const today = new Date()
-        const expiry = new Date(data.expiry_date)
-
-        if (data.status === "active" && expiry >= today) {
-          validSubscription = data
-          console.log("✅ Valid time-limited subscription found")
-        } else {
-          console.log("❌ Subscription expired or inactive:", { status: data.status, expiry: data.expiry_date })
-        }
+      if (data) {
+          if (data.plan === "lifetime" && data.status === "active") {
+            validSubscription = data
+          } else {
+            const today = new Date()
+            const expiry = new Date(data.expiry_date)
+            if (data.status === "active" && expiry >= today) {
+              validSubscription = data
+            }
+          }
       }
 
+      // Update State
       setSubscription(validSubscription)
       subscriptionCache.current = validSubscription
 
-      // ✅ SAVE TO LOCALSTORAGE
+      // Update LocalStorage
       if (validSubscription) {
         localStorage.setItem(CACHE_KEYS.SUBSCRIPTION, JSON.stringify(validSubscription))
         localStorage.setItem(CACHE_KEYS.TIMESTAMP, Date.now().toString())
@@ -142,13 +108,6 @@ export const AuthProvider = ({ children }) => {
 
     } catch (err) {
       console.error("Subscription fetch error:", err)
-      
-      if (err.message === 'Subscription fetch timeout' && subscriptionCache.current) {
-        console.log("⏱️ Timeout - using cached subscription")
-        setSubscription(subscriptionCache.current)
-      } else if (!subscriptionCache.current) {
-        setSubscription(null)
-      }
     } finally {
       isFetchingSubscription.current = false
     }
@@ -159,54 +118,33 @@ export const AuthProvider = ({ children }) => {
 
     const bootstrap = async () => {
       try {
-        // Get session first
         const { data } = await supabase.auth.getSession()
         if (!mounted) return
         
         const currentUser = data.session?.user ?? null
-        setUser(currentUser)
+        safeSetUser(currentUser)
         
-        // ✅ OPTIMISTIC: If we have cached subscription FOR THIS USER, unlock UI immediately
-        const hasCachedSubscription = subscriptionCache.current !== null
-        const cacheMatchesUser = subscriptionCache.current?.email === currentUser?.email
-        
-        if (hasCachedSubscription && cacheMatchesUser && !hasInitialized.current && currentUser) {
-          console.log("⚡ Fast path: Using cached subscription for verified user")
-          hasInitialized.current = true
-          
-          // ✅ UNLOCK UI IMMEDIATELY
-          setAuthLoading(false)
-          
-          // ✅ FIRE-AND-FORGET: Validate in background (completely non-blocking)
-          if (currentUser?.email) {
-            fetchSubscription(currentUser.email, true).catch(err => {
-              console.error("Background subscription validation failed:", err)
-            })
-          }
-          return
-        }
-
-        // ✅ SLOW PATH: No cache OR cache doesn't match user - must wait
-        console.log("🐌 Slow path: Fetching fresh subscription data")
-        hasInitialized.current = true
-
+        // Logic: If we have a user, we MUST fetch/verify subscription before releasing loading
         if (currentUser?.email) {
-          await fetchSubscription(currentUser.email, true)
+            
+            // 1. Check if cache matches
+            const cacheMatches = subscriptionCache.current?.email === currentUser.email
+            
+            if (cacheMatches) {
+                // Optimistic: Set data immediately
+                setSubscription(subscriptionCache.current)
+                // Refresh in background
+                fetchSubscription(currentUser.email)
+            } else {
+                // No cache match: Must await fetch
+                await fetchSubscription(currentUser.email)
+            }
         } else {
-          setSubscription(null)
-          subscriptionCache.current = null
-          localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
-          localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
+            setSubscription(null)
         }
         
       } catch (err) {
         console.error("Auth bootstrap failed", err)
-        if (mounted) {
-          setUser(null)
-          if (!subscriptionCache.current) {
-            setSubscription(null)
-          }
-        }
       } finally {
         if (mounted) setAuthLoading(false)
       }
@@ -214,121 +152,45 @@ export const AuthProvider = ({ children }) => {
 
     bootstrap()
 
-    const {
-      data: { subscription: authSub },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: { subscription: authListener } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return
+      
+      const currentUser = session?.user ?? null
+      safeSetUser(currentUser)
 
-      console.log("🔐 Auth state change:", event)
-
-      // ✅ IGNORE REDUNDANT EVENTS
-      if (event === 'INITIAL_SESSION') {
-        console.log("⏭️ Ignoring INITIAL_SESSION (already handled in bootstrap)")
-        return
-      }
-
-      try {
-        // ✅ TOKEN_REFRESHED: Just update user, don't refetch subscription
-        if (event === 'TOKEN_REFRESHED') {
-          const currentUser = session?.user ?? null
-          setUser(currentUser)
-          // Don't fetch subscription - it doesn't change on token refresh
-          return
-        }
-
-        // ✅ SIGNED_OUT: Clear everything
-        if (event === 'SIGNED_OUT') {
-          setUser(null)
-          setSubscription(null)
-          subscriptionCache.current = null
-          isFetchingSubscription.current = false
-          lastFetchEmail.current = null
-          localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
-          localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
-          return
-        }
-
-        // ✅ SIGNED_IN: Only fetch if it's a NEW user (not duplicate event)
-        if (event === 'SIGNED_IN') {
-          const currentUser = session?.user ?? null
-          
-          // If same user, skip refetch
-          if (user && currentUser?.email === user?.email) {
-            console.log("⏭️ Ignoring duplicate SIGNED_IN event")
-            return
-          }
-          
-          setUser(currentUser)
-
-          if (currentUser?.email) {
-            // ✅ CRITICAL: On fresh login, MUST wait for subscription
-            // Check if cached subscription belongs to this user
-            const cachedMatchesUser = subscriptionCache.current?.email === currentUser.email
-            
-            if (cachedMatchesUser) {
-              // Safe to use cache - fire-and-forget refresh
-              console.log("✅ Using cached subscription for same user")
-              fetchSubscription(currentUser.email, false).catch(err => {
-                console.error("Background refresh failed:", err)
-              })
-            } else {
-              // New user or different user - MUST fetch subscription
-              console.log("🔄 Fetching subscription for new login")
-              await fetchSubscription(currentUser.email, false)
-            }
-          } else {
-            setSubscription(null)
-            subscriptionCache.current = null
-            localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
-            localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
-          }
-          return
-        }
-
-        // ✅ OTHER EVENTS: Handle normally
-        const currentUser = session?.user ?? null
-        setUser(currentUser)
-
-        if (currentUser?.email) {
-          await fetchSubscription(currentUser.email, false)
-        } else {
+      if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED' || event === 'INITIAL_SESSION') {
+         if (currentUser?.email) {
+             // If we already have a subscription loaded for this exact email, don't re-fetch on simple token refresh
+             if (subscriptionCache.current?.email === currentUser.email) {
+                 if (!subscription) setSubscription(subscriptionCache.current)
+             } else {
+                 await fetchSubscription(currentUser.email)
+             }
+         }
+      } else if (event === 'SIGNED_OUT') {
           setSubscription(null)
           subscriptionCache.current = null
           localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
-          localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
-        }
-      } catch (err) {
-        console.error("Auth state change error:", err)
       }
     })
 
     return () => {
       mounted = false
-      authSub.unsubscribe()
+      authListener.unsubscribe()
     }
-  }, [user]) // ✅ Add user to deps to detect duplicate SIGNED_IN events
+    // 🔴 CRITICAL FIX: Empty dependency array. Do not put [user] here.
+  }, []) 
 
   const logout = async () => {
     await supabase.auth.signOut()
-    setUser(null)
+    safeSetUser(null)
     setSubscription(null)
     subscriptionCache.current = null
-    hasInitialized.current = false
-    isFetchingSubscription.current = false
-    lastFetchEmail.current = null
     localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
-    localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
   }
 
   return (
-    <AuthContext.Provider
-      value={{
-        user,
-        subscription,
-        authLoading,
-        logout,
-      }}
-    >
+    <AuthContext.Provider value={{ user, subscription, authLoading, logout }}>
       {children}
     </AuthContext.Provider>
   )
