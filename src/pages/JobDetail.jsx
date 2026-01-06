@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { useParams, useNavigate } from "react-router-dom"
 import { supabase } from "../supabaseClient"
-import { JOB_CACHE, CACHE_KEY_PREFIX, CACHE_TTL } from "../components/JobCard"
+import { JOB_CACHE, CACHE_KEY_PREFIX, CACHE_TTL } from "../utils/jobCache"
 import Navbar from "../components/Navbar"
 import {
   Briefcase,
