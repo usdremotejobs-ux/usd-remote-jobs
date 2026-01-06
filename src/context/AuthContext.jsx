@@ -30,9 +30,25 @@ export const AuthProvider = ({ children }) => {
         // Use cache if less than 10 minutes old
         if (age < 10 * 60 * 1000) {
           const parsedSub = JSON.parse(cached)
-          subscriptionCache.current = parsedSub
-          setSubscription(parsedSub)
-          console.log('✅ Loaded subscription from cache')
+          
+          // ✅ CRITICAL: Verify cache belongs to current session
+          // Check if Supabase session exists and matches cached email
+          supabase.auth.getSession().then(({ data }) => {
+            const currentEmail = data.session?.user?.email
+            
+            if (currentEmail && parsedSub.email === currentEmail) {
+              // Cache matches current user - safe to use
+              subscriptionCache.current = parsedSub
+              setSubscription(parsedSub)
+              console.log('✅ Loaded subscription from cache (verified)')
+            } else {
+              // Cache is for different user - clear it
+              console.log('⚠️ Cache mismatch - clearing old subscription')
+              localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
+              localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
+              subscriptionCache.current = null
+            }
+          })
         }
       }
     } catch (err) {
@@ -99,12 +115,16 @@ export const AuthProvider = ({ children }) => {
 
       if (data.plan === "lifetime" && data.status === "active") {
         validSubscription = data
+        console.log("✅ Valid lifetime subscription found")
       } else {
         const today = new Date()
         const expiry = new Date(data.expiry_date)
 
         if (data.status === "active" && expiry >= today) {
           validSubscription = data
+          console.log("✅ Valid time-limited subscription found")
+        } else {
+          console.log("❌ Subscription expired or inactive:", { status: data.status, expiry: data.expiry_date })
         }
       }
 
@@ -139,19 +159,20 @@ export const AuthProvider = ({ children }) => {
 
     const bootstrap = async () => {
       try {
-        // ✅ OPTIMISTIC: If we have cached subscription, unlock UI immediately
-        const hasCachedSubscription = subscriptionCache.current !== null
+        // Get session first
+        const { data } = await supabase.auth.getSession()
+        if (!mounted) return
         
-        if (hasCachedSubscription && !hasInitialized.current) {
-          console.log("⚡ Fast path: Using cached subscription")
+        const currentUser = data.session?.user ?? null
+        setUser(currentUser)
+        
+        // ✅ OPTIMISTIC: If we have cached subscription FOR THIS USER, unlock UI immediately
+        const hasCachedSubscription = subscriptionCache.current !== null
+        const cacheMatchesUser = subscriptionCache.current?.email === currentUser?.email
+        
+        if (hasCachedSubscription && cacheMatchesUser && !hasInitialized.current && currentUser) {
+          console.log("⚡ Fast path: Using cached subscription for verified user")
           hasInitialized.current = true
-          
-          // Get session quickly and unlock UI
-          const { data } = await supabase.auth.getSession()
-          if (!mounted) return
-          
-          const currentUser = data.session?.user ?? null
-          setUser(currentUser)
           
           // ✅ UNLOCK UI IMMEDIATELY
           setAuthLoading(false)
@@ -165,14 +186,9 @@ export const AuthProvider = ({ children }) => {
           return
         }
 
-        // ✅ SLOW PATH: No cache, must wait
-        console.log("🐌 Slow path: No cache, fetching fresh data")
-        
-        const { data } = await supabase.auth.getSession()
-        if (!mounted) return
-
-        const currentUser = data.session?.user ?? null
-        setUser(currentUser)
+        // ✅ SLOW PATH: No cache OR cache doesn't match user - must wait
+        console.log("🐌 Slow path: Fetching fresh subscription data")
+        hasInitialized.current = true
 
         if (currentUser?.email) {
           await fetchSubscription(currentUser.email, true)
@@ -182,8 +198,6 @@ export const AuthProvider = ({ children }) => {
           localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
           localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
         }
-        
-        hasInitialized.current = true
         
       } catch (err) {
         console.error("Auth bootstrap failed", err)
@@ -247,12 +261,19 @@ export const AuthProvider = ({ children }) => {
           setUser(currentUser)
 
           if (currentUser?.email) {
-            // Fire-and-forget if we have cache
-            if (subscriptionCache.current) {
+            // ✅ CRITICAL: On fresh login, MUST wait for subscription
+            // Check if cached subscription belongs to this user
+            const cachedMatchesUser = subscriptionCache.current?.email === currentUser.email
+            
+            if (cachedMatchesUser) {
+              // Safe to use cache - fire-and-forget refresh
+              console.log("✅ Using cached subscription for same user")
               fetchSubscription(currentUser.email, false).catch(err => {
                 console.error("Background refresh failed:", err)
               })
             } else {
+              // New user or different user - MUST fetch subscription
+              console.log("🔄 Fetching subscription for new login")
               await fetchSubscription(currentUser.email, false)
             }
           } else {
