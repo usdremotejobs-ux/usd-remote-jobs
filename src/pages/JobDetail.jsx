@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { useParams, useNavigate } from "react-router-dom"
 import { supabase } from "../supabaseClient"
-import { JOB_CACHE, CACHE_KEY_PREFIX, CACHE_TTL } from "../components/JobCard"
+import { JOB_CACHE, CACHE_KEY_PREFIX, CACHE_TTL } from "../utils/jobCache"
 import Navbar from "../components/Navbar"
 import {
   Briefcase,
@@ -137,7 +137,7 @@ export default function JobDetail() {
           style={{ padding: "80px 20px", textAlign: "center" }}
         >
           <p style={{ marginBottom: "16px" }}>{error}</p>
-          <button className="btn" onClick={() => navigate("/dashboard")}>
+          <button className="btn" onClick={() => navigate(-1)}> 
             Back to Jobs
           </button>
           <button 
@@ -170,15 +170,12 @@ export default function JobDetail() {
     <>
       <Navbar />
 
-      {/* FIX 1: Removed inline padding. 
-         Added 'job-detail-container' class to control spacing via CSS below.
-      */}
       <div
-        className="container job-detail-container"
-        style={{ maxWidth: "900px" }}
+        className="container"
+        style={{ padding: "40px 20px", maxWidth: "900px" }}
       >
         <button
-          onClick={() => navigate("/dashboard")}
+          onClick={() => navigate(-1)} // ✅ Changed: Go back in history
           className="btn"
           style={{
             marginBottom: "24px",
@@ -353,11 +350,6 @@ export default function JobDetail() {
       </div>
 
       <style>{`
-        /* Default Desktop Padding */
-        .job-detail-container {
-          padding: 40px 20px;
-        }
-
         @media (max-width: 900px) {
           .job-content-grid {
             grid-template-columns: 1fr !important;
@@ -373,8 +365,7 @@ export default function JobDetail() {
           left: 0;
           right: 0;
           background: white;
-          /* FIX 2: Reduced padding from 16px to 12px for a tighter look */
-          padding: 12px 0;
+          padding: 16px 0;
           border-top: 1px solid var(--border);
           box-shadow: 0 -4px 10px rgba(0,0,0,0.05);
           display: none;
@@ -382,18 +373,11 @@ export default function JobDetail() {
         }
 
         @media (max-width: 768px) {
-          /* FIX 3: Shrink top gap on mobile from 40px to 20px */
-          .job-detail-container {
-             padding: 20px 20px 80px 20px; /* Added bottom padding to account for fixed bar */
-          }
-
           .mobile-apply-bar {
             display: block;
           }
-          
-          /* Remove the old padding-bottom that was on .container */
           .container {
-            padding-bottom: 0; 
+            padding-bottom: 80px;
           }
         }
       `}</style>
