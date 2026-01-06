@@ -21,8 +21,8 @@ export const AuthProvider = ({ children }) => {
     }
 
     try {
-      // ✅ Longer timeout for initial page load
-      const timeoutDuration = isInitialLoad ? 15000 : 8000
+      // ✅ OPTIMIZED - Reduced timeout
+      const timeoutDuration = isInitialLoad ? 6000 : 4000
       
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Subscription fetch timeout')), timeoutDuration)
@@ -105,13 +105,13 @@ export const AuthProvider = ({ children }) => {
 
     const bootstrap = async () => {
       try {
-        // ✅ LONGER TIMEOUT FOR INITIAL LOAD
+        // ✅ OPTIMIZED - Reduced timeout
         bootstrapTimeout = setTimeout(() => {
           if (mounted && authLoading) {
             console.warn("Auth bootstrap timeout - forcing completion")
             setAuthLoading(false)
           }
-        }, 20000)
+        }, 8000)
 
         const { data } = await supabase.auth.getSession()
         if (!mounted) return
