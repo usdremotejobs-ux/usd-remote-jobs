@@ -16,6 +16,8 @@ export const AuthProvider = ({ children }) => {
   
   const subscriptionCache = useRef(null)
   const hasInitialized = useRef(false)
+  const isFetchingSubscription = useRef(false) // ✅ Prevent duplicate fetches
+  const lastFetchEmail = useRef(null) // ✅ Track last fetched email
 
   // ✅ LOAD FROM LOCALSTORAGE IMMEDIATELY on mount
   useEffect(() => {
@@ -25,7 +27,7 @@ export const AuthProvider = ({ children }) => {
       
       if (cached && timestamp) {
         const age = Date.now() - parseInt(timestamp)
-        // Use cache if less than 10 minutes old (increased from 5)
+        // Use cache if less than 10 minutes old
         if (age < 10 * 60 * 1000) {
           const parsedSub = JSON.parse(cached)
           subscriptionCache.current = parsedSub
@@ -47,9 +49,18 @@ export const AuthProvider = ({ children }) => {
       return
     }
 
+    // ✅ PREVENT DUPLICATE FETCHES
+    if (isFetchingSubscription.current && lastFetchEmail.current === email) {
+      console.log('⏭️ Skipping duplicate subscription fetch')
+      return
+    }
+
+    isFetchingSubscription.current = true
+    lastFetchEmail.current = email
+
     try {
-      // ✅ MUCH FASTER TIMEOUT
-      const timeoutDuration = isInitialLoad ? 3000 : 2000
+      // ✅ FAST TIMEOUT
+      const timeoutDuration = 2500 // 2.5 seconds
       
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Subscription fetch timeout')), timeoutDuration)
@@ -118,6 +129,8 @@ export const AuthProvider = ({ children }) => {
       } else if (!subscriptionCache.current) {
         setSubscription(null)
       }
+    } finally {
+      isFetchingSubscription.current = false
     }
   }
 
@@ -143,7 +156,7 @@ export const AuthProvider = ({ children }) => {
           // ✅ UNLOCK UI IMMEDIATELY
           setAuthLoading(false)
           
-          // ✅ VALIDATE IN BACKGROUND (non-blocking)
+          // ✅ FIRE-AND-FORGET: Validate in background (completely non-blocking)
           if (currentUser?.email) {
             fetchSubscription(currentUser.email, true).catch(err => {
               console.error("Background subscription validation failed:", err)
@@ -194,30 +207,64 @@ export const AuthProvider = ({ children }) => {
 
       console.log("🔐 Auth state change:", event)
 
+      // ✅ IGNORE REDUNDANT EVENTS
+      if (event === 'INITIAL_SESSION') {
+        console.log("⏭️ Ignoring INITIAL_SESSION (already handled in bootstrap)")
+        return
+      }
+
       try {
+        // ✅ TOKEN_REFRESHED: Just update user, don't refetch subscription
         if (event === 'TOKEN_REFRESHED') {
           const currentUser = session?.user ?? null
           setUser(currentUser)
-          
-          // Non-blocking background refresh
-          if (currentUser?.email) {
-            fetchSubscription(currentUser.email, false).catch(err => {
-              console.error("Background refresh failed:", err)
-            })
-          }
+          // Don't fetch subscription - it doesn't change on token refresh
           return
         }
 
+        // ✅ SIGNED_OUT: Clear everything
         if (event === 'SIGNED_OUT') {
           setUser(null)
           setSubscription(null)
           subscriptionCache.current = null
+          isFetchingSubscription.current = false
+          lastFetchEmail.current = null
           localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
           localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
           return
         }
 
-        // For other events
+        // ✅ SIGNED_IN: Only fetch if it's a NEW user (not duplicate event)
+        if (event === 'SIGNED_IN') {
+          const currentUser = session?.user ?? null
+          
+          // If same user, skip refetch
+          if (user && currentUser?.email === user?.email) {
+            console.log("⏭️ Ignoring duplicate SIGNED_IN event")
+            return
+          }
+          
+          setUser(currentUser)
+
+          if (currentUser?.email) {
+            // Fire-and-forget if we have cache
+            if (subscriptionCache.current) {
+              fetchSubscription(currentUser.email, false).catch(err => {
+                console.error("Background refresh failed:", err)
+              })
+            } else {
+              await fetchSubscription(currentUser.email, false)
+            }
+          } else {
+            setSubscription(null)
+            subscriptionCache.current = null
+            localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
+            localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
+          }
+          return
+        }
+
+        // ✅ OTHER EVENTS: Handle normally
         const currentUser = session?.user ?? null
         setUser(currentUser)
 
@@ -238,7 +285,7 @@ export const AuthProvider = ({ children }) => {
       mounted = false
       authSub.unsubscribe()
     }
-  }, [])
+  }, [user]) // ✅ Add user to deps to detect duplicate SIGNED_IN events
 
   const logout = async () => {
     await supabase.auth.signOut()
@@ -246,6 +293,8 @@ export const AuthProvider = ({ children }) => {
     setSubscription(null)
     subscriptionCache.current = null
     hasInitialized.current = false
+    isFetchingSubscription.current = false
+    lastFetchEmail.current = null
     localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
     localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
   }
