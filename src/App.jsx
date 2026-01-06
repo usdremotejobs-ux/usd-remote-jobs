@@ -1,5 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
+import GlobalLoader from "./components/GlobalLoader"; // <--- 1. Import Here
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import JobDetail from "./pages/JobDetail";
@@ -11,16 +12,7 @@ function AppRoutes() {
 
     // ✅ GLOBAL LOADING SCREEN
     if (authLoading) {
-        return (
-            <div
-                style={{
-                    paddingTop: "60px",
-                    textAlign: "center",
-                }}
-            >
-                Loading...
-            </div>
-        );
+        return <GlobalLoader />; // <--- 2. Use Component Here
     }
 
     return (
