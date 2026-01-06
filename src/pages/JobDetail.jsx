@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react"
 import { useParams, useNavigate } from "react-router-dom"
 import { supabase } from "../supabaseClient"
+import { JOB_CACHE, CACHE_KEY_PREFIX, CACHE_TTL } from "../components/JobCard"
 import Navbar from "../components/Navbar"
 import {
   Briefcase,
@@ -24,12 +25,36 @@ export default function JobDetail() {
 
     const fetchJob = async () => {
       try {
+        // ✅ CHECK MEMORY CACHE FIRST
+        let cached = JOB_CACHE.get(id)
+        
+        // ✅ CHECK LOCALSTORAGE IF NOT IN MEMORY
+        if (!cached) {
+          try {
+            const localData = localStorage.getItem(CACHE_KEY_PREFIX + id)
+            if (localData) {
+              cached = JSON.parse(localData)
+              // Update memory cache
+              JOB_CACHE.set(id, cached)
+            }
+          } catch (err) {
+            console.log('Failed to load from localStorage:', err)
+          }
+        }
+        
+        if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+          console.log("Using cached job data")
+          setJob(cached.data)
+          setLoading(false)
+          return
+        }
+
         setLoading(true)
         setError(null)
 
-        // ✅ ADD TIMEOUT TO PREVENT INFINITE HANGING
+        // ✅ FASTER TIMEOUT
         const timeoutPromise = new Promise((_, reject) => {
-          timeoutId = setTimeout(() => reject(new Error('Request timeout')), 8000)
+          timeoutId = setTimeout(() => reject(new Error('Request timeout')), 4000)
         })
 
         const fetchPromise = supabase
@@ -49,14 +74,31 @@ export default function JobDetail() {
           return
         }
 
+        // ✅ CACHE THE JOB in memory and localStorage
+        const cacheEntry = {
+          data,
+          timestamp: Date.now()
+        }
+        
+        JOB_CACHE.set(id, cacheEntry)
+        
+        try {
+          localStorage.setItem(
+            CACHE_KEY_PREFIX + id,
+            JSON.stringify(cacheEntry)
+          )
+        } catch (err) {
+          console.log('Failed to save to localStorage:', err)
+        }
+
         setJob(data)
       } catch (err) {
         console.error("Unexpected error:", err)
         if (active) {
           setJob(null)
           setError(err.message === 'Request timeout' 
-            ? "Request timed out. Please refresh the page." 
-            : "Something went wrong while loading the job")
+            ? "Request timed out. Please refresh." 
+            : "Something went wrong")
         }
       } finally {
         if (timeoutId) clearTimeout(timeoutId)
@@ -103,7 +145,7 @@ export default function JobDetail() {
             onClick={() => window.location.reload()} 
             style={{ marginLeft: "12px" }}
           >
-            Refresh Page
+            Refresh
           </button>
         </div>
       </>
