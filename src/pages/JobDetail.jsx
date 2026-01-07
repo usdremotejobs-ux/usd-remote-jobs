@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react"
-import { useParams, useNavigate } from "react-router-dom"
+import { useParams, useNavigate, useLocation } from "react-router-dom" // ✅ Import useLocation
 import { supabase } from "../supabaseClient"
 import { JOB_CACHE, CACHE_KEY_PREFIX, CACHE_TTL } from "../utils/jobCache"
 import Navbar from "../components/Navbar"
@@ -14,27 +14,37 @@ import {
 export default function JobDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
+  const location = useLocation() // ✅ Access the passed state
 
   const [job, setJob] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
+  // ✅ SMART BACK FUNCTION
+  const handleBack = () => {
+    // If we have a "from" state (e.g. ?page=3), go there
+    if (location.state?.from) {
+      navigate(`/dashboard${location.state.from}`)
+    } else {
+      // Fallback if user opened link directly
+      navigate('/dashboard')
+    }
+  }
+
   useEffect(() => {
+    // ... (Keep existing useEffect fetch logic exactly as is) ...
     let active = true
     let timeoutId = null
 
     const fetchJob = async () => {
       try {
-        // ✅ CHECK MEMORY CACHE FIRST
         let cached = JOB_CACHE.get(id)
         
-        // ✅ CHECK LOCALSTORAGE IF NOT IN MEMORY
         if (!cached) {
           try {
             const localData = localStorage.getItem(CACHE_KEY_PREFIX + id)
             if (localData) {
               cached = JSON.parse(localData)
-              // Update memory cache
               JOB_CACHE.set(id, cached)
             }
           } catch (err) {
@@ -52,7 +62,6 @@ export default function JobDetail() {
         setLoading(true)
         setError(null)
 
-        // ✅ FASTER TIMEOUT
         const timeoutPromise = new Promise((_, reject) => {
           timeoutId = setTimeout(() => reject(new Error('Request timeout')), 4000)
         })
@@ -74,7 +83,6 @@ export default function JobDetail() {
           return
         }
 
-        // ✅ CACHE THE JOB in memory and localStorage
         const cacheEntry = {
           data,
           timestamp: Date.now()
@@ -137,7 +145,8 @@ export default function JobDetail() {
           style={{ padding: "80px 20px", textAlign: "center" }}
         >
           <p style={{ marginBottom: "16px" }}>{error}</p>
-          <button className="btn" onClick={() => navigate(-1)}> 
+          {/* ✅ Use handleBack */}
+          <button className="btn" onClick={handleBack}> 
             Back to Jobs
           </button>
           <button 
@@ -174,8 +183,9 @@ export default function JobDetail() {
         className="container"
         style={{ padding: "40px 20px", maxWidth: "900px" }}
       >
+        {/* ✅ Use handleBack here */}
         <button
-          onClick={() => navigate(-1)} // ✅ Changed: Go back in history
+          onClick={handleBack}
           className="btn"
           style={{
             marginBottom: "24px",
@@ -188,6 +198,7 @@ export default function JobDetail() {
         </button>
 
         {/* HEADER */}
+        {/* ... (Keep existing Header/Content code exactly the same) ... */}
         <div
           className="card"
           style={{
