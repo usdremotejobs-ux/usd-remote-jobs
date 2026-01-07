@@ -1,37 +1,9 @@
 import { useNavigate } from 'react-router-dom'
 import { Briefcase, DollarSign, Clock } from 'lucide-react'
 import { supabase } from '../supabaseClient'
+import { JOB_CACHE, CACHE_KEY_PREFIX, CACHE_TTL } from '../utils/jobCache'
 
-// ✅ LOCALSTORAGE CACHE for individual jobs
-const CACHE_KEY_PREFIX = 'job_detail_'
-const CACHE_TTL = 1000 * 60 * 10 // 10 minutes
-
-// ✅ Memory cache for quick access during session
-const JOB_CACHE = new Map()
-
-// Load from localStorage on import
-try {
-  const keys = Object.keys(localStorage)
-  keys.forEach(key => {
-    if (key.startsWith(CACHE_KEY_PREFIX)) {
-      const cached = localStorage.getItem(key)
-      if (cached) {
-        const parsed = JSON.parse(cached)
-        const age = Date.now() - parsed.timestamp
-        if (age < CACHE_TTL) {
-          const jobId = key.replace(CACHE_KEY_PREFIX, '')
-          JOB_CACHE.set(jobId, parsed)
-        } else {
-          localStorage.removeItem(key)
-        }
-      }
-    }
-  })
-} catch (err) {
-  console.error('Failed to load job cache:', err)
-}
-
-export default function JobCard({ job }) {
+export default function JobCard({ job, isNew = false }) {
     const navigate = useNavigate()
 
     // ✅ PREFETCH on hover to make navigation instant
@@ -80,8 +52,27 @@ export default function JobCard({ job }) {
             className="card job-card" 
             onClick={() => navigate(`/job/${job.id}`)} 
             onMouseEnter={prefetchJob}
-            style={{ cursor: 'pointer' }}
+            style={{ cursor: 'pointer', position: 'relative' }}
         >
+            {/* ✅ NEW BADGE */}
+            {isNew && (
+                <div style={{
+                    position: 'absolute',
+                    top: '12px',
+                    right: '12px',
+                    background: '#10b981',
+                    color: 'white',
+                    padding: '4px 12px',
+                    borderRadius: '12px',
+                    fontSize: '0.75rem',
+                    fontWeight: '700',
+                    zIndex: 1,
+                    boxShadow: '0 2px 8px rgba(16, 185, 129, 0.3)'
+                }}>
+                    NEW
+                </div>
+            )}
+            
             <div className="job-logo">
                 {job.company_logo_url ? (
                     <img src={job.company_logo_url} alt={job.company} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '12px' }} />
@@ -109,6 +100,3 @@ export default function JobCard({ job }) {
         </div>
     )
 }
-
-// Export cache for use in JobDetail
-export { JOB_CACHE, CACHE_KEY_PREFIX, CACHE_TTL }
