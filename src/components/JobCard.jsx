@@ -1,14 +1,15 @@
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom' // ✅ Import useLocation
 import { Briefcase, DollarSign, Clock } from 'lucide-react'
 import { supabase } from '../supabaseClient'
 import { JOB_CACHE, CACHE_KEY_PREFIX, CACHE_TTL } from '../utils/jobCache'
 
 export default function JobCard({ job, isNew = false }) {
     const navigate = useNavigate()
+    const location = useLocation() // ✅ Get current URL params
 
-    // ✅ PREFETCH on hover to make navigation instant
     const prefetchJob = async () => {
-        // Check memory cache first
+        // ... (Keep existing prefetch logic) ...
+         // Check memory cache first
         const cached = JOB_CACHE.get(job.id)
         if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
             return
@@ -50,12 +51,16 @@ export default function JobCard({ job, isNew = false }) {
     return (
         <div 
             className="card job-card" 
-            onClick={() => navigate(`/job/${job.id}`)} 
+            onClick={() => {
+                // ✅ PASS THE SEARCH PARAMS IN STATE
+                // "location.search" contains "?page=3&category=tech..."
+                navigate(`/job/${job.id}`, { state: { from: location.search } })
+            }} 
             onMouseEnter={prefetchJob}
             style={{ cursor: 'pointer', position: 'relative' }}
         >
-            {/* ✅ NEW BADGE */}
-            {isNew && (
+            {/* ... (Keep existing UI code) ... */}
+             {isNew && (
                 <div style={{
                     position: 'absolute',
                     top: '12px',
