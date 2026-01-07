@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react"
-import { useSearchParams } from "react-router-dom" // ✅ NEW
+import { useEffect, useMemo } from "react"
+import { useSearchParams } from "react-router-dom"
 import Navbar from "../components/Navbar"
 import JobCard from "../components/JobCard"
 import { Search, X, TrendingUp } from "lucide-react"
@@ -7,44 +7,45 @@ import { useJobs } from "../hooks/useJobs"
 
 /**
  * Dashboard
- * - UI only
- * - No Supabase calls
- * - No auth logic
- * - No race conditions
- * - ✅ Persists pagination in URL
+ * - Pagination state stored in URL (?page=3)
+ * - Survives navigation and refresh
  */
 export default function Dashboard() {
   const { jobs, loading, error, refresh } = useJobs()
-  const [searchParams, setSearchParams] = useSearchParams() // ✅ NEW
+  const [searchParams, setSearchParams] = useSearchParams()
 
-  // 🔎 Filters
-  const [category, setCategory] = useState("")
-  const [salary, setSalary] = useState("")
-  const [experience, setExperience] = useState("")
-  const [search, setSearch] = useState("")
-  const [sortBy, setSortBy] = useState("latest") // ✅ Sort option
-
-  // 📄 Pagination - ✅ Read from URL, default to 1
-  const [currentPage, setCurrentPage] = useState(() => {
-    const page = parseInt(searchParams.get('page')) || 1
-    return page
-  })
+  // 📄 Read page from URL (reactive)
+  const currentPage = parseInt(searchParams.get('page')) || 1
+  
+  // 🔎 Filters (could also be in URL in the future)
+  const category = searchParams.get('category') || ""
+  const salary = searchParams.get('salary') || ""
+  const experience = searchParams.get('experience') || ""
+  const search = searchParams.get('q') || ""
+  const sortBy = searchParams.get('sort') || "latest"
 
   const JOBS_PER_PAGE = 10
 
-  // ✅ Sync URL when page changes
-  useEffect(() => {
-    if (currentPage === 1) {
-      searchParams.delete('page') // Remove page param if it's 1
-    } else {
-      searchParams.set('page', currentPage.toString())
-    }
-    setSearchParams(searchParams, { replace: true })
-  }, [currentPage])
+  // ✅ Helper to update URL params
+  const updateParams = (updates) => {
+    const newParams = new URLSearchParams(searchParams)
+    
+    Object.entries(updates).forEach(([key, value]) => {
+      if (!value || value === "" || value === "latest" || value === 1) {
+        newParams.delete(key)
+      } else {
+        newParams.set(key, value.toString())
+      }
+    })
+    
+    setSearchParams(newParams, { replace: true })
+  }
 
-  // 🔁 Reset page when filters change
+  // 🔁 Reset to page 1 when filters change
   useEffect(() => {
-    setCurrentPage(1)
+    if (currentPage !== 1) {
+      updateParams({ page: 1 })
+    }
   }, [category, salary, experience, search, sortBy])
 
   // 🧠 Derived filter options (from real data)
@@ -87,7 +88,7 @@ export default function Dashboard() {
       )
     }
 
-    // ✅ SORT BY SERIAL OR DATE
+    // Sort by serial
     if (sortBy === "latest") {
       result.sort((a, b) => (b.serial || 0) - (a.serial || 0))
     } else if (sortBy === "oldest") {
@@ -107,16 +108,12 @@ export default function Dashboard() {
     startIndex + JOBS_PER_PAGE
   )
 
-  // 🧹 Clear filters
+  // 🧹 Clear all filters
   const clearFilters = () => {
-    setCategory("")
-    setSalary("")
-    setExperience("")
-    setSearch("")
-    setSortBy("latest")
+    setSearchParams({}, { replace: true })
   }
 
-  // ✅ Get max serial for "NEW" badge detection
+  // ✅ Get max serial for "NEW" badge
   const maxSerial = useMemo(() => {
     return Math.max(...jobs.map(j => j.serial || 0), 0)
   }, [jobs])
@@ -147,7 +144,7 @@ export default function Dashboard() {
               className="input"
               placeholder="Search by job title or company..."
               value={search}
-              onChange={e => setSearch(e.target.value)}
+              onChange={e => updateParams({ q: e.target.value, page: 1 })}
               style={{
                 paddingLeft: "48px",
                 paddingRight: "20px",
@@ -159,11 +156,10 @@ export default function Dashboard() {
 
         {/* FILTER BAR */}
         <div className="filters-bar" style={{ justifyContent: "center" }}>
-          {/* ✅ Sort Dropdown */}
           <select
             className="select"
             value={sortBy}
-            onChange={e => setSortBy(e.target.value)}
+            onChange={e => updateParams({ sort: e.target.value, page: 1 })}
             style={{ fontWeight: sortBy === "latest" ? "600" : "400" }}
           >
             <option value="latest">🔥 Latest First</option>
@@ -174,7 +170,7 @@ export default function Dashboard() {
           <select
             className="select"
             value={category}
-            onChange={e => setCategory(e.target.value)}
+            onChange={e => updateParams({ category: e.target.value, page: 1 })}
           >
             <option value="">All Categories</option>
             {categories.map(c => (
@@ -187,7 +183,7 @@ export default function Dashboard() {
           <select
             className="select"
             value={salary}
-            onChange={e => setSalary(e.target.value)}
+            onChange={e => updateParams({ salary: e.target.value, page: 1 })}
           >
             <option value="">Any Salary</option>
             {salaryOptions.map(s => (
@@ -200,7 +196,7 @@ export default function Dashboard() {
           <select
             className="select"
             value={experience}
-            onChange={e => setExperience(e.target.value)}
+            onChange={e => updateParams({ experience: e.target.value, page: 1 })}
           >
             <option value="">Any Experience</option>
             {experienceOptions.map(e => (
@@ -217,7 +213,7 @@ export default function Dashboard() {
           )}
         </div>
 
-        {/* ✅ Results Count */}
+        {/* Results Count */}
         {!loading && !error && (
           <div style={{ textAlign: "center", margin: "20px 0", color: "var(--text-muted)", fontSize: "0.9rem" }}>
             {filteredJobs.length === jobs.length ? (
@@ -254,7 +250,7 @@ export default function Dashboard() {
               <JobCard 
                 key={job.id} 
                 job={job} 
-                isNew={job.serial && job.serial >= maxSerial - 5} // ✅ Mark top 5 as new
+                isNew={job.serial && job.serial >= maxSerial - 5}
               />
             ))
           ) : (
@@ -285,7 +281,7 @@ export default function Dashboard() {
             {[...Array(totalPages)].map((_, i) => (
               <button
                 key={i}
-                onClick={() => setCurrentPage(i + 1)}
+                onClick={() => updateParams({ page: i + 1 })}
                 className="btn"
                 style={{
                   background: currentPage === i + 1 ? "#045149" : "#fff",
@@ -302,7 +298,7 @@ export default function Dashboard() {
               <button
                 className="btn"
                 style={{ border: "1px solid #000" }}
-                onClick={() => setCurrentPage(p => p + 1)}
+                onClick={() => updateParams({ page: currentPage + 1 })}
               >
                 Next
               </button>
