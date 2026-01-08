@@ -195,6 +195,12 @@ button {
   color: var(--primary);
 }
 
+.logo-img {
+  height: 28px;
+  width: auto;
+  display: block;
+}
+
 /* Job Card */
 .job-card {
   display: grid;
