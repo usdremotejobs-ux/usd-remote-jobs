@@ -1,7 +1,7 @@
 import { useAuth } from '../context/AuthContext'
 import { useNavigate } from 'react-router-dom'
 import { LogOut, LayoutDashboard } from 'lucide-react'
-import logo from '../assets/logo.svg'
+import logo from '../assets/logo.png'
 
 export default function Navbar() {
     const { logout } = useAuth()
