@@ -1,6 +1,6 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
 import { AuthProvider, useAuth } from "./context/AuthContext";
-import GlobalLoader from "./components/GlobalLoader"; // <--- 1. Import Here
+import GlobalLoader from "./components/GlobalLoader"; 
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import JobDetail from "./pages/JobDetail";
@@ -8,17 +8,23 @@ import Upgrade from "./pages/Upgrade";
 import ProtectedRoute from "./components/ProtectedRoute";
 
 function AppRoutes() {
-    const { authLoading } = useAuth()
+    // ✅ Get 'user' from auth context to check if already logged in
+    const { authLoading, user } = useAuth()
 
-    // ✅ GLOBAL LOADING SCREEN
     if (authLoading) {
-        return <GlobalLoader />; // <--- 2. Use Component Here
+        return <GlobalLoader />;
     }
 
     return (
         <Routes>
             {/* Public */}
-            <Route path="/login" element={<Login />} />
+            <Route 
+                path="/login" 
+                element={
+                    // ✅ FIX: If user is already logged in, go to Dashboard
+                    !user ? <Login /> : <Navigate to="/dashboard" replace />
+                } 
+            />
             <Route path="/upgrade" element={<Upgrade />} />
 
             {/* Protected */}
