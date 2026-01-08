@@ -182,13 +182,6 @@ export const AuthProvider = ({ children }) => {
 
       console.log("Auth state change:", event)
 
-      // ✅ CRITICAL FIX: Force loading state ON immediately when user signs in.
-      // This ensures the app waits for the subscription fetch to finish below
-      // before rendering protected routes.
-      if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
-        setAuthLoading(true)
-      }
-
       try {
         if (event === 'TOKEN_REFRESHED') {
           const currentUser = session?.user ?? null
