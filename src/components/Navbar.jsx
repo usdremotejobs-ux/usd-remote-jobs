@@ -1,6 +1,7 @@
 import { useAuth } from '../context/AuthContext'
 import { useNavigate } from 'react-router-dom'
 import { LogOut, LayoutDashboard } from 'lucide-react'
+import logo from '../assets/logo.svg'
 
 export default function Navbar() {
     const { logout } = useAuth()
@@ -14,23 +15,35 @@ export default function Navbar() {
     return (
         <header className="header">
             <div className="container header-content">
-                <div className="logo">
-                    USD <span>Remote Jobs</span>
-                </div>
+                
+                {/* Logo — icon only */}
+                <button
+                    onClick={() => navigate('/dashboard')}
+                    className="logo-btn"
+                    aria-label="Go to dashboard"
+                >
+                    <img
+                        src={logo}
+                        alt="USD Remote Jobs"
+                        className="logo-img"
+                    />
+                </button>
 
-                <div style={{ display: 'flex', gap: '12px' }}>
-                    {/* ✅ FIXED: Added onClick handler */}
+                <div className="nav-actions">
                     <button 
                         className="btn btn-secondary" 
                         onClick={() => navigate('/dashboard')}
                     >
-                        <LayoutDashboard size={16} style={{ marginRight: '6px' }} />
-                        Dashboard
+                        <LayoutDashboard size={16} />
+                        <span className="btn-text">Dashboard</span>
                     </button>
 
-                    <button className="btn btn-secondary" onClick={handleLogout}>
-                        <LogOut size={16} style={{ marginRight: '6px' }} />
-                        Logout
+                    <button 
+                        className="btn btn-secondary" 
+                        onClick={handleLogout}
+                    >
+                        <LogOut size={16} />
+                        <span className="btn-text">Logout</span>
                     </button>
                 </div>
             </div>
