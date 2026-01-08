@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef } from "react"
+import { useEffect, useMemo } from "react"
 import { useSearchParams } from "react-router-dom"
 import Navbar from "../components/Navbar"
 import JobCard from "../components/JobCard"
-import { Search, X } from "lucide-react"
+import { Search, X, TrendingUp } from "lucide-react"
 import { useJobs } from "../hooks/useJobs"
 
 /**
@@ -14,13 +14,18 @@ export default function Dashboard() {
   const { jobs, loading, error, refresh } = useJobs()
   const [searchParams, setSearchParams] = useSearchParams()
 
-  // 1️⃣ Add Ref to track initial load
-  const isFirstLoad = useRef(true)
-
   // 📄 Read page from URL (reactive)
   const currentPage = parseInt(searchParams.get('page')) || 1
-   
-  // 🔎 Filters (could also be in URL in the future)
+  
+  // 🐛 DEBUG - Remove after testing
+  console.log('🔍 Dashboard render:', {
+    url: window.location.href,
+    pageParam: searchParams.get('page'),
+    currentPage,
+    searchParamsString: searchParams.toString()
+  })
+  
+  // 🔎 Filters
   const category = searchParams.get('category') || ""
   const salary = searchParams.get('salary') || ""
   const experience = searchParams.get('experience') || ""
@@ -31,6 +36,8 @@ export default function Dashboard() {
 
   // ✅ Helper to update URL params
   const updateParams = (updates) => {
+    console.log('📝 updateParams called with:', updates) // 🐛 DEBUG
+    
     const newParams = new URLSearchParams(searchParams)
     
     Object.entries(updates).forEach(([key, value]) => {
@@ -41,18 +48,12 @@ export default function Dashboard() {
       }
     })
     
+    console.log('📝 New URL will be:', newParams.toString()) // 🐛 DEBUG
     setSearchParams(newParams, { replace: true })
   }
 
   // 🔁 Reset to page 1 when filters change
   useEffect(() => {
-    // 2️⃣ SKIP FIRST LOAD: Don't reset page if we just arrived
-    if (isFirstLoad.current) {
-      isFirstLoad.current = false
-      return
-    }
-
-    // Only reset if it's a REAL user filter change
     if (currentPage !== 1) {
       updateParams({ page: 1 })
     }
