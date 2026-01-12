@@ -1,6 +1,5 @@
 import { useAuth } from '../context/AuthContext'
 import { useNavigate } from 'react-router-dom'
-// Changed CircleHelp to HelpCircle
 import { LogOut, LayoutDashboard, HelpCircle } from 'lucide-react'
 import logo from '../assets/logo.png'
 
@@ -30,7 +29,8 @@ export default function Navbar() {
                     />
                 </button>
 
-                <div className="nav-actions">
+                {/* Added inline style here to fix the stacking issue */}
+                <div className="nav-actions" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                     <button 
                         className="btn btn-secondary" 
                         onClick={() => navigate('/dashboard')}
@@ -39,7 +39,6 @@ export default function Navbar() {
                         <span className="btn-text">Dashboard</span>
                     </button>
 
-                    {/* Help Button - using HelpCircle */}
                     <a 
                         href="mailto:usdremotejobs@gmail.com"
                         className="btn btn-secondary"
