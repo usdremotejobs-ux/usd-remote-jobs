@@ -14,6 +14,15 @@ export default function Navbar() {
 
     return (
         <header className="header">
+            {/* CSS to hide ONLY the logout text on mobile devices */}
+            <style>{`
+                @media (max-width: 768px) {
+                    .logout-text {
+                        display: none;
+                    }
+                }
+            `}</style>
+
             <div className="container header-content">
                 
                 {/* Logo — icon only */}
@@ -29,7 +38,6 @@ export default function Navbar() {
                     />
                 </button>
 
-                {/* Added inline style here to fix the stacking issue */}
                 <div className="nav-actions" style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                     <button 
                         className="btn btn-secondary" 
@@ -51,9 +59,11 @@ export default function Navbar() {
                     <button 
                         className="btn btn-secondary" 
                         onClick={handleLogout}
+                        title="Logout"
                     >
                         <LogOut size={16} />
-                        <span className="btn-text">Logout</span>
+                        {/* Added 'logout-text' class here so only this one gets hidden */}
+                        <span className="btn-text logout-text">Logout</span>
                     </button>
                 </div>
             </div>
