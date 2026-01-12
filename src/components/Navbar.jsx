@@ -1,6 +1,7 @@
 import { useAuth } from '../context/AuthContext'
 import { useNavigate } from 'react-router-dom'
-import { LogOut, LayoutDashboard, CircleHelp } from 'lucide-react'
+// Changed CircleHelp to HelpCircle
+import { LogOut, LayoutDashboard, HelpCircle } from 'lucide-react'
 import logo from '../assets/logo.png'
 
 export default function Navbar() {
@@ -38,13 +39,13 @@ export default function Navbar() {
                         <span className="btn-text">Dashboard</span>
                     </button>
 
-                    {/* Help Button - Opens Email Client */}
+                    {/* Help Button - using HelpCircle */}
                     <a 
                         href="mailto:usdremotejobs@gmail.com"
                         className="btn btn-secondary"
                         style={{ textDecoration: 'none', display: 'flex', alignItems: 'center' }}
                     >
-                        <CircleHelp size={16} />
+                        <HelpCircle size={16} />
                         <span className="btn-text">Help</span>
                     </a>
 
