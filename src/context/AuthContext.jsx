@@ -174,7 +174,9 @@ export const AuthProvider = ({ children }) => {
           lastFetchedEmail.current = currentUser.email
           await fetchSubscription(currentUser.email, true)
         } else {
+          // No user — no fetch will happen, clear loading immediately
           setSubscription(null)
+          setSubscriptionLoading(false)
           subscriptionCache.current = null
           localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
           localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
@@ -183,6 +185,7 @@ export const AuthProvider = ({ children }) => {
         console.error("Auth bootstrap failed", err)
         if (mounted) {
           setUser(null)
+          setSubscriptionLoading(false)
           if (!subscriptionCache.current) {
             setSubscription(null)
           }
@@ -235,13 +238,16 @@ export const AuthProvider = ({ children }) => {
           // Always fetch for genuinely new sign-ins (different email)
           if (hasFetchedSubscription.current && lastFetchedEmail.current === currentUser.email) {
             console.log('Skipping duplicate subscription fetch (already claimed by bootstrap)')
+            // bootstrap owns the fetch — don't touch subscriptionLoading here
           } else {
             hasFetchedSubscription.current = true
             lastFetchedEmail.current = currentUser.email
             await fetchSubscription(currentUser.email, false)
           }
         } else {
+          // No user — no fetch will happen, clear loading immediately
           setSubscription(null)
+          setSubscriptionLoading(false)
           subscriptionCache.current = null
           localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
           localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
