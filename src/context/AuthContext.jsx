@@ -42,6 +42,12 @@ export const AuthProvider = ({ children }) => {
   // ✅ FIX 4: Prevent double-fetch from bootstrap() + onAuthStateChange racing on initial load
   const hasFetchedSubscription = useRef(false)
   const lastFetchedEmail = useRef(null)
+  // ✅ FIX: Tracks whether bootstrap() has fully completed.
+  // TOKEN_REFRESHED fires concurrently with bootstrap during initial page load.
+  // Its 3s timeout (no retries) races bootstrap's 5s+retry fetch and can lose
+  // on slow networks, setting subscription=null before bootstrap recovers.
+  // Once isInitialized=true, bootstrap is done and TOKEN_REFRESHED fetches normally.
+  const isInitialized = useRef(false)
 
   // ✅ FIX 1: Sync the in-memory ref with whatever the lazy initializer loaded
   // so subscriptionCache.current is always consistent with state from the start.
@@ -204,6 +210,7 @@ export const AuthProvider = ({ children }) => {
         }
       } finally {
         if (bootstrapTimeout) clearTimeout(bootstrapTimeout)
+        isInitialized.current = true  // ✅ Mark bootstrap complete so TOKEN_REFRESHED can fetch freely
         if (mounted) setAuthLoading(false)
       }
     }
@@ -223,7 +230,16 @@ export const AuthProvider = ({ children }) => {
           setUser(currentUser)
           
           if (currentUser?.email) {
-            await fetchSubscription(currentUser.email, false)
+            if (isInitialized.current) {
+              // ✅ Bootstrap is done — this is an in-session token refresh, fetch normally
+              await fetchSubscription(currentUser.email, false)
+            } else {
+              // ✅ Bootstrap is still running and owns the subscription fetch.
+              // Deferring here prevents a race where TOKEN_REFRESHED's 3s timeout
+              // fires first (no retries) and sets subscription=null before
+              // bootstrap's 5s+retry fetch can succeed.
+              console.log('TOKEN_REFRESHED during bootstrap — deferring subscription fetch to bootstrap')
+            }
           }
           return
         }
