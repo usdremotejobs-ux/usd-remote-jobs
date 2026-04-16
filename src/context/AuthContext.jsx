@@ -52,6 +52,12 @@ export const AuthProvider = ({ children }) => {
   })
 
   const fetchSubscription = async (email, isInitialLoad = false) => {
+    // ✅ FIX: Tracks whether we are about to recurse into a retry.
+    // The finally block must NOT clear subscriptionLoading if a retry is
+    // still pending — otherwise ProtectedRoute sees loading=false+subscription=null
+    // and redirects to /upgrade before the retry has a chance to resolve.
+    let isRetrying = false
+
     if (!email) {
       setSubscription(null)
       subscriptionCache.current = null
@@ -133,6 +139,10 @@ export const AuthProvider = ({ children }) => {
       if (isInitialLoad && retryCount.current < maxRetries) {
         retryCount.current++
         console.log(`Retrying subscription fetch (${retryCount.current}/${maxRetries})...`)
+        // ✅ FIX: Signal BEFORE the await so finally knows not to clear loading.
+        // JS runs finally when this function returns/throws — if we set isRetrying
+        // after the await, finally may have already fired.
+        isRetrying = true
         await new Promise(resolve => setTimeout(resolve, 800))
         return fetchSubscription(email, isInitialLoad)
       }
@@ -144,7 +154,9 @@ export const AuthProvider = ({ children }) => {
         setSubscription(null)
       }
     } finally {
-      setSubscriptionLoading(false)
+      // Only clear loading if we are NOT about to retry.
+      // If isRetrying=true, the recursive call owns subscriptionLoading from here on.
+      if (!isRetrying) setSubscriptionLoading(false)
     }
   }
 
@@ -220,6 +232,15 @@ export const AuthProvider = ({ children }) => {
           setUser(null)
           setSubscription(null)
           subscriptionCache.current = null
+          // ✅ FIX: Reset dedup flag so the next SIGNED_IN always re-fetches.
+          // Without this, after a token-refresh SIGNED_OUT the subsequent SIGNED_IN
+          // would be skipped by Fix 4's check, leaving subscription=null while
+          // user is set — causing a false redirect to /upgrade.
+          hasFetchedSubscription.current = false
+          lastFetchedEmail.current = null
+          // ✅ Keep subscriptionLoading=true so ProtectedRoute shows a loader
+          // (not /upgrade) during the gap between SIGNED_OUT and the next fetch.
+          setSubscriptionLoading(true)
           // ✅ FIX 3: Do NOT clear localStorage here.
           // SIGNED_OUT fires for both intentional logouts AND silent token-refresh
           // failures (e.g. user's tab was in the background). Wiping the cache in
