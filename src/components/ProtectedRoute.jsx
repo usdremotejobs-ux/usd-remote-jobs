@@ -2,11 +2,12 @@ import { Navigate, useLocation } from "react-router-dom"
 import { useAuth } from "../context/AuthContext"
 
 export default function ProtectedRoute({ children, requireActiveSubscription }) {
-  const { user, subscription, authLoading } = useAuth()
+  const { user, subscription, authLoading, subscriptionLoading } = useAuth()
   const location = useLocation()
 
-  // ✅ Show loading only during auth initialization
-  if (authLoading) {
+  // ✅ Wait for both auth AND the subscription DB fetch to finish
+  // Without this, subscription = null while fetching looks identical to "no subscription"
+  if (authLoading || (requireActiveSubscription && subscriptionLoading)) {
     return <div className="page-loader">Loading...</div>
   }
 
@@ -15,7 +16,7 @@ export default function ProtectedRoute({ children, requireActiveSubscription }) 
     return <Navigate to="/login" state={{ from: location }} replace />
   }
 
-  // ✅ If subscription is required, check it immediately
+  // ✅ If subscription is required, check it only after loading is confirmed done
   if (requireActiveSubscription) {
     if (!subscription || subscription.status !== "active") {
       console.log("Redirecting to upgrade - subscription:", subscription)
