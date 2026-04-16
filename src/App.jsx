@@ -4,11 +4,9 @@ import GlobalLoader from "./components/GlobalLoader";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import JobDetail from "./pages/JobDetail";
-import Upgrade from "./pages/Upgrade";
 import ProtectedRoute from "./components/ProtectedRoute";
 
 function AppRoutes() {
-    // ✅ Get 'user' from auth context to check if already logged in
     const { authLoading, user } = useAuth()
 
     if (authLoading) {
@@ -21,17 +19,15 @@ function AppRoutes() {
             <Route 
                 path="/login" 
                 element={
-                    // ✅ FIX: If user is already logged in, go to Dashboard
                     !user ? <Login /> : <Navigate to="/dashboard" replace />
                 } 
             />
-            <Route path="/upgrade" element={<Upgrade />} />
 
-            {/* Protected */}
+            {/* Protected — login required, no subscription check */}
             <Route
                 path="/dashboard"
                 element={
-                    <ProtectedRoute requireActiveSubscription>
+                    <ProtectedRoute>
                         <Dashboard />
                     </ProtectedRoute>
                 }
@@ -40,7 +36,7 @@ function AppRoutes() {
             <Route
                 path="/job/:id"
                 element={
-                    <ProtectedRoute requireActiveSubscription>
+                    <ProtectedRoute>
                         <JobDetail />
                     </ProtectedRoute>
                 }
@@ -48,6 +44,9 @@ function AppRoutes() {
 
             {/* Default */}
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
+
+            {/* Catch-all: redirect stale /upgrade bookmarks to dashboard */}
+            <Route path="*" element={<Navigate to="/dashboard" replace />} />
         </Routes>
     );
 }
