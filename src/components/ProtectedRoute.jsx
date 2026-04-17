@@ -1,29 +1,20 @@
 import { Navigate, useLocation } from "react-router-dom"
 import { useAuth } from "../context/AuthContext"
 
-export default function ProtectedRoute({ children, requireActiveSubscription }) {
-  const { user, subscription, authLoading } = useAuth()
+export default function ProtectedRoute({ children }) {
+  const { user, authLoading } = useAuth()
   const location = useLocation()
 
-  // ✅ Show loading only during auth initialization
+  // Wait for auth initialization
   if (authLoading) {
     return <div className="page-loader">Loading...</div>
   }
 
-  // ✅ Check if user is logged in
+  // Check if user is logged in — that's all we need.
+  // All users are lifetime subscribers, so no subscription check required.
   if (!user) {
     return <Navigate to="/login" state={{ from: location }} replace />
   }
 
-  // ✅ If subscription is required, check it immediately
-  if (requireActiveSubscription) {
-    if (!subscription || subscription.status !== "active") {
-      console.log("Redirecting to upgrade - subscription:", subscription)
-      return <Navigate to="/upgrade" replace />
-    }
-  }
-
   return children
 }
-
-

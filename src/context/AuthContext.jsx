@@ -11,42 +11,69 @@ const CACHE_KEYS = {
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null)
-  const [subscription, setSubscription] = useState(null)
+  // ✅ FIX 1: Lazy initializer — reads localStorage synchronously on first render
+  // so subscription is already populated BEFORE the first paint, not after a useEffect.
+  const [subscription, setSubscription] = useState(() => {
+    try {
+      const cached = localStorage.getItem(CACHE_KEYS.SUBSCRIPTION)
+      const timestamp = localStorage.getItem(CACHE_KEYS.TIMESTAMP)
+      if (cached && timestamp) {
+        const age = Date.now() - parseInt(timestamp)
+        if (age < 5 * 60 * 1000) {
+          const parsedSub = JSON.parse(cached)
+          console.log('Subscription loaded synchronously from cache')
+          return parsedSub
+        }
+      }
+    } catch (err) {
+      console.error('Failed to load subscription cache:', err)
+    }
+    return null
+  })
   const [authLoading, setAuthLoading] = useState(true)
+  // ✅ FIX 2: Separate loading state for the subscription DB fetch.
+  // Stays true until fetchSubscription resolves, so ProtectedRoute never
+  // mistakes "fetch in progress" for "user has no subscription".
+  const [subscriptionLoading, setSubscriptionLoading] = useState(true)
   
   const subscriptionCache = useRef(null)
   const retryCount = useRef(0)
   const maxRetries = 2
+  // ✅ FIX 4: Prevent double-fetch from bootstrap() + onAuthStateChange racing on initial load
+  const hasFetchedSubscription = useRef(false)
+  const lastFetchedEmail = useRef(null)
+  // ✅ FIX: Tracks whether bootstrap() has fully completed.
+  // TOKEN_REFRESHED fires concurrently with bootstrap during initial page load.
+  // Its 3s timeout (no retries) races bootstrap's 5s+retry fetch and can lose
+  // on slow networks, setting subscription=null before bootstrap recovers.
+  // Once isInitialized=true, bootstrap is done and TOKEN_REFRESHED fetches normally.
+  const isInitialized = useRef(false)
 
-  // ✅ LOAD FROM LOCALSTORAGE on mount
-  useEffect(() => {
-    try {
-      const cached = localStorage.getItem(CACHE_KEYS.SUBSCRIPTION)
-      const timestamp = localStorage.getItem(CACHE_KEYS.TIMESTAMP)
-      
-      if (cached && timestamp) {
-        const age = Date.now() - parseInt(timestamp)
-        // Use cache if less than 5 minutes old
-        if (age < 5 * 60 * 1000) {
-          const parsedSub = JSON.parse(cached)
-          subscriptionCache.current = parsedSub
-          setSubscription(parsedSub)
-          console.log('Loaded subscription from cache')
-        }
-      }
-    } catch (err) {
-      console.error('Failed to load cache:', err)
-    }
-  }, [])
+  // ✅ FIX 1: Sync the in-memory ref with whatever the lazy initializer loaded
+  // so subscriptionCache.current is always consistent with state from the start.
+  const [_initSub] = useState(() => {
+    const s = subscription // closure captures the lazy-initialized value
+    if (s) subscriptionCache.current = s
+    return null // unused return, just running the side-effect synchronously
+  })
 
   const fetchSubscription = async (email, isInitialLoad = false) => {
+    // ✅ FIX: Tracks whether we are about to recurse into a retry.
+    // The finally block must NOT clear subscriptionLoading if a retry is
+    // still pending — otherwise ProtectedRoute sees loading=false+subscription=null
+    // and redirects to /upgrade before the retry has a chance to resolve.
+    let isRetrying = false
+
     if (!email) {
       setSubscription(null)
       subscriptionCache.current = null
       localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
       localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
+      setSubscriptionLoading(false)
       return
     }
+
+    setSubscriptionLoading(true)
 
     try {
       // ✅ FASTER TIMEOUT
@@ -118,6 +145,10 @@ export const AuthProvider = ({ children }) => {
       if (isInitialLoad && retryCount.current < maxRetries) {
         retryCount.current++
         console.log(`Retrying subscription fetch (${retryCount.current}/${maxRetries})...`)
+        // ✅ FIX: Signal BEFORE the await so finally knows not to clear loading.
+        // JS runs finally when this function returns/throws — if we set isRetrying
+        // after the await, finally may have already fired.
+        isRetrying = true
         await new Promise(resolve => setTimeout(resolve, 800))
         return fetchSubscription(email, isInitialLoad)
       }
@@ -128,6 +159,10 @@ export const AuthProvider = ({ children }) => {
       } else if (!subscriptionCache.current) {
         setSubscription(null)
       }
+    } finally {
+      // Only clear loading if we are NOT about to retry.
+      // If isRetrying=true, the recursive call owns subscriptionLoading from here on.
+      if (!isRetrying) setSubscriptionLoading(false)
     }
   }
 
@@ -152,9 +187,14 @@ export const AuthProvider = ({ children }) => {
         setUser(currentUser)
 
         if (currentUser?.email) {
+          // ✅ FIX 4: Claim the fetch so onAuthStateChange's INITIAL_SESSION skips it
+          hasFetchedSubscription.current = true
+          lastFetchedEmail.current = currentUser.email
           await fetchSubscription(currentUser.email, true)
         } else {
+          // No user — no fetch will happen, clear loading immediately
           setSubscription(null)
+          setSubscriptionLoading(false)
           subscriptionCache.current = null
           localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
           localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
@@ -163,12 +203,14 @@ export const AuthProvider = ({ children }) => {
         console.error("Auth bootstrap failed", err)
         if (mounted) {
           setUser(null)
+          setSubscriptionLoading(false)
           if (!subscriptionCache.current) {
             setSubscription(null)
           }
         }
       } finally {
         if (bootstrapTimeout) clearTimeout(bootstrapTimeout)
+        isInitialized.current = true  // ✅ Mark bootstrap complete so TOKEN_REFRESHED can fetch freely
         if (mounted) setAuthLoading(false)
       }
     }
@@ -188,7 +230,16 @@ export const AuthProvider = ({ children }) => {
           setUser(currentUser)
           
           if (currentUser?.email) {
-            await fetchSubscription(currentUser.email, false)
+            if (isInitialized.current) {
+              // ✅ Bootstrap is done — this is an in-session token refresh, fetch normally
+              await fetchSubscription(currentUser.email, false)
+            } else {
+              // ✅ Bootstrap is still running and owns the subscription fetch.
+              // Deferring here prevents a race where TOKEN_REFRESHED's 3s timeout
+              // fires first (no retries) and sets subscription=null before
+              // bootstrap's 5s+retry fetch can succeed.
+              console.log('TOKEN_REFRESHED during bootstrap — deferring subscription fetch to bootstrap')
+            }
           }
           return
         }
@@ -197,8 +248,21 @@ export const AuthProvider = ({ children }) => {
           setUser(null)
           setSubscription(null)
           subscriptionCache.current = null
-          localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
-          localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
+          // ✅ FIX: Reset dedup flag so the next SIGNED_IN always re-fetches.
+          // Without this, after a token-refresh SIGNED_OUT the subsequent SIGNED_IN
+          // would be skipped by Fix 4's check, leaving subscription=null while
+          // user is set — causing a false redirect to /upgrade.
+          hasFetchedSubscription.current = false
+          lastFetchedEmail.current = null
+          // ✅ Keep subscriptionLoading=true so ProtectedRoute shows a loader
+          // (not /upgrade) during the gap between SIGNED_OUT and the next fetch.
+          setSubscriptionLoading(true)
+          // ✅ FIX 3: Do NOT clear localStorage here.
+          // SIGNED_OUT fires for both intentional logouts AND silent token-refresh
+          // failures (e.g. user's tab was in the background). Wiping the cache in
+          // the failure case means the next login has no fallback, causing a false
+          // redirect to /upgrade while the fresh DB fetch is in-flight.
+          // The explicit logout() function below handles intentional cache clearing.
           return
         }
 
@@ -206,9 +270,21 @@ export const AuthProvider = ({ children }) => {
         setUser(currentUser)
 
         if (currentUser?.email) {
-          await fetchSubscription(currentUser.email, false)
+          // ✅ FIX 4: Skip if bootstrap() already fetched for this exact email
+          // (covers INITIAL_SESSION racing with bootstrap on page load)
+          // Always fetch for genuinely new sign-ins (different email)
+          if (hasFetchedSubscription.current && lastFetchedEmail.current === currentUser.email) {
+            console.log('Skipping duplicate subscription fetch (already claimed by bootstrap)')
+            // bootstrap owns the fetch — don't touch subscriptionLoading here
+          } else {
+            hasFetchedSubscription.current = true
+            lastFetchedEmail.current = currentUser.email
+            await fetchSubscription(currentUser.email, false)
+          }
         } else {
+          // No user — no fetch will happen, clear loading immediately
           setSubscription(null)
+          setSubscriptionLoading(false)
           subscriptionCache.current = null
           localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
           localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
@@ -230,12 +306,14 @@ export const AuthProvider = ({ children }) => {
   }, [])
 
   const logout = async () => {
+    // ✅ FIX 3: Clear cache HERE (intentional logout) rather than in the SIGNED_OUT
+    // event handler (which also fires for accidental token-refresh failures).
+    localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
+    localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
     await supabase.auth.signOut()
     setUser(null)
     setSubscription(null)
     subscriptionCache.current = null
-    localStorage.removeItem(CACHE_KEYS.SUBSCRIPTION)
-    localStorage.removeItem(CACHE_KEYS.TIMESTAMP)
   }
 
   return (
@@ -244,6 +322,7 @@ export const AuthProvider = ({ children }) => {
         user,
         subscription,
         authLoading,
+        subscriptionLoading,
         logout,
       }}
     >
